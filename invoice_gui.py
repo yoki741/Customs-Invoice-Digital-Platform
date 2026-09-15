@@ -21,8 +21,12 @@ from openpyxl.styles import Alignment
 from tkcalendar import DateEntry
 
 
+def is_frozen():
+    return getattr(sys, 'frozen', False)
+
+
 def get_app_dir():
-    if getattr(sys, 'frozen', False):
+    if is_frozen():
         current = Path(sys.executable).parent
     else:
         current = Path(__file__).parent
@@ -32,8 +36,15 @@ def get_app_dir():
         if current.parent == current:
             break
         current = current.parent
-    if getattr(sys, 'frozen', False):
+    if is_frozen():
         return Path(sys.executable).parent
+    return Path(__file__).parent
+
+
+def get_resource_dir():
+    """获取资源目录：打包环境从内部读取，开发环境从当前目录读取"""
+    if is_frozen() and hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS)
     return Path(__file__).parent
 
 
@@ -41,9 +52,12 @@ class InvoiceProcessor:
     def __init__(self, base_dir: str):
         self.base_dir = Path(base_dir)
         self.source_dir = self.base_dir / "柬埔寨清关例子"
-        self.price_file = self.base_dir / "Eastex Vanco CDC 布料单价.xlsx"
         self.output_dir = self.base_dir / "输出"
-        self.template_dir = self.base_dir / "模板文件"
+        
+        # 资源文件直接从exe内部读取
+        resource_dir = get_resource_dir()
+        self.template_dir = resource_dir / "模板文件"
+        self.price_file = resource_dir / "Eastex Vanco CDC 布料单价.xlsx"
         self.weight_ratios = {"By Sea": 0.94, "By Air": 0.95, "By Truck": 0.94}
         self.transport_map = {"海运": "海运模板.xlsx", "空运": "空运模板.xlsx", "陆运": "陆运模板.xlsx"}
         self.consignee_data = {
