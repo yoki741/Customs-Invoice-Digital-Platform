@@ -405,18 +405,23 @@ class InvoiceProcessor:
             ws_inv1 = wb_out['INV1']
             self._write_header(ws_inv1, first_header)
 
+            # 动态定位Total行和CONTAINER行
+            total_row = 37
+            container_row = None
+            for r in range(24, 60):
+                c_val = ws_inv1[f'C{r}'].value
+                a_val = ws_inv1[f'A{r}'].value
+                if c_val and 'Total' in str(c_val):
+                    total_row = r
+                if a_val and 'CONTAINER' in str(a_val).upper():
+                    container_row = r
+            ref_default_row = total_row - 1
+
             if manual_data and manual_data.get('date'):
                 ws_inv1['J9'] = manual_data['date']
             if manual_data and manual_data.get('bill_no'):
                 ws_inv1['J10'] = manual_data['bill_no']
                 ws_inv1['J10'].alignment = Alignment(horizontal='left', vertical='top')
-
-            if transport == '海运':
-                ws_inv1['A38'] = 'CONTAINER NO / SEAL NO:'
-                if manual_data and manual_data.get('container_info'):
-                    lines = manual_data['container_info'].split('\n')
-                    for i, line in enumerate(lines[:3]):
-                        ws_inv1[f'A{39 + i}'] = line
 
             if delivery_to and delivery_to in self.consignee_data:
                 consignee = self.consignee_data[delivery_to]
@@ -459,11 +464,16 @@ class InvoiceProcessor:
 
             saved_merges = []
             for m in list(ws_inv1.merged_cells.ranges):
-                if m.min_row >= 24 and m.max_row <= 36:
+                if m.min_row >= 24 and m.max_row <= total_row - 1:
+                    top_cell = ws_inv1.cell(row=m.min_row, column=m.min_col)
+                    if top_cell.value and 'REF:' in str(top_cell.value):
+                        ws_inv1.unmerge_cells(str(m))
+                        top_cell.value = None
+                        continue
                     saved_merges.append((str(m), m.min_row, m.min_col, m.max_row, m.max_col))
                     ws_inv1.unmerge_cells(str(m))
 
-            for r in range(24, 37):
+            for r in range(24, total_row):
                 for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
                     cell = ws_inv1[f'{col}{r}']
                     if not isinstance(cell, openpyxl.cell.cell.MergedCell):
@@ -513,7 +523,7 @@ class InvoiceProcessor:
                     ws_inv1[f'D{cur_row}'].number_format = desc_number_format
                     cur_row += 1
 
-            ref_row = max(cur_row, 36)  # 至少在36行（Total上面）
+            ref_row = max(cur_row, ref_default_row)
             ref_value = ' '.join(all_bill_nos)
             for merge_info in saved_merges:
                 coord, min_r, min_c, max_r, max_c = merge_info
@@ -522,6 +532,19 @@ class InvoiceProcessor:
                 except Exception:
                     pass
             ws_inv1[f'A{ref_row}'] = f"REF:{ref_value}"
+
+            # 清空集装箱区域模板数据，让用户手动输入
+            if container_row:
+                for r in range(container_row + 1, container_row + 10):
+                    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']:
+                        cell = ws_inv1[f'{col}{r}']
+                        if not isinstance(cell, openpyxl.cell.cell.MergedCell):
+                            cell.value = None
+                # 写入用户输入的集装箱信息
+                if manual_data and manual_data.get('container_info'):
+                    lines = manual_data['container_info'].split('\n')
+                    for i, line in enumerate(lines[:3]):
+                        ws_inv1[f'A{container_row + 1 + i}'] = line
 
             if 'InputTable' in wb_out.sheetnames:
                 del wb_out['InputTable']
