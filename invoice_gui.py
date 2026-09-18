@@ -183,6 +183,10 @@ class InvoiceProcessor:
         if delivery_to:
             delivery_to = str(delivery_to).strip()
 
+        # 读取件数和毛重
+        rolls = ws['G14'].value or 0
+        gross_weight = ws['I14'].value or 0
+
         po_data = []
         for row in range(17, 45):
             desc = ws[f'C{row}'].value
@@ -195,6 +199,17 @@ class InvoiceProcessor:
                     'net_weight': float(nw)
                 })
 
+        # 读取Inv工作表的抬头信息
+        header = None
+        if 'Inv' in wb.sheetnames:
+            inv_ws = wb['Inv']
+            company_name = inv_ws['B1'].value or ''
+            address_phone = inv_ws['B2'].value or ''
+            header = {
+                'company_name': str(company_name).strip(),
+                'address_phone': str(address_phone).strip()
+            }
+
         wb.close()
         return {
             'ship_mode': ship_mode,
@@ -202,7 +217,10 @@ class InvoiceProcessor:
             'invoice_no': invoice_no,
             'delivery_to': delivery_to,
             'po_data': po_data,
-            'file_path': file_path
+            'file_path': file_path,
+            'header': header,
+            'rolls': float(rolls),
+            'gross_weight': float(gross_weight)
         }
 
     def copy_sheet_with_format(self, src_wb, src_sheet_name, dst_wb, dst_sheet_name):
@@ -291,7 +309,7 @@ class InvoiceProcessor:
             return False
 
     def process_files(self, file_paths, manual_data=None):
-        """处理多个文件，按公司+运输方式分组，每组输出一个文件"""
+        """处理多个文件，按delivery_to分组生成独立工作簿"""
         if not file_paths:
             return []
 
@@ -303,29 +321,313 @@ class InvoiceProcessor:
             except Exception as e:
                 all_data.append({'file_path': Path(fp), 'error': str(e)})
 
+        valid_data = [d for d in all_data if 'error' not in d]
+        error_data = [d for d in all_data if 'error' in d]
+
+        # 按delivery_to分组
         groups = defaultdict(list)
-        for data in all_data:
-            if 'error' in data:
-                continue
-            transport = self.get_transport_type(data['ship_mode'], data['file_path'].name)
-            company = self.get_company_name(data['bill_to'])
-            if transport and company:
-                groups[(company, transport)].append(data)
+        for data in valid_data:
+            delivery_to = data.get('delivery_to', '') or 'UNKNOWN'
+            groups[delivery_to].append(data)
 
         results = []
-        for (company, transport), group_data in groups.items():
-            r = self._generate_output(company, transport, group_data, manual_data)
+        # 为每个delivery_to分组生成独立工作簿
+        for delivery_to, group_data in groups.items():
+            r = self._generate_single_output(group_data, delivery_to, manual_data)
             results.append(r)
 
-        for data in all_data:
-            if 'error' in data:
-                results.append({
-                    'file': data['file_path'].name,
-                    'success': False,
-                    'message': f"读取失败: {data['error']}"
-                })
+        for data in error_data:
+            results.append({
+                'file': data['file_path'].name,
+                'success': False,
+                'message': f"读取失败: {data['error']}"
+            })
 
         return results
+
+    def _generate_single_output(self, group_data, delivery_to, manual_data):
+        """为单个delivery_to分组生成独立工作簿"""
+        result = {
+            'file': '',
+            'success': False,
+            'message': '',
+            'invoice_no': '',
+            'company': '',
+            'transport': '',
+            'weight': 0,
+            'amount': 0
+        }
+
+        if manual_data and manual_data.get('output_dir'):
+            output_base = Path(manual_data['output_dir'])
+        else:
+            output_base = self.output_dir
+        output_base.mkdir(parents=True, exist_ok=True)
+
+        first_data = group_data[0]
+        first_header = first_data.get('header')
+        ship_mode = first_data.get('ship_mode', '')
+
+        # 生成文件名：供应商名 INV#提单号-后缀(运输方式)
+        supplier = (manual_data.get('supplier') or 'UNKNOWN').strip() if manual_data else 'UNKNOWN'
+        invoice_no = (manual_data.get('invoice_no') or '').strip() if manual_data else ''
+        
+        # 根据delivery_to确定后缀
+        if 'EASTEX' in delivery_to.upper():
+            suffix = '-BT'
+        elif 'VANCO' in delivery_to.upper():
+            suffix = '-CT'
+        else:
+            suffix = ''
+        
+        # 根据运输方式确定英文后缀
+        if 'Air' in ship_mode:
+            transport_suffix = 'AIR'
+        elif 'Truck' in ship_mode:
+            transport_suffix = 'TRUCK'
+        else:
+            transport_suffix = 'SEA'
+        
+        file_name = f"{supplier} INV#{invoice_no}{suffix}({transport_suffix})"
+        output_file = output_base / f"{file_name}.xlsm"
+        result['file'] = file_name
+
+        transport = self.get_transport_type(ship_mode, first_data['file_path'].name)
+        if not transport:
+            transport = '海运'
+        template_file = self.template_dir / self.transport_map.get(transport, '')
+        if not template_file.exists():
+            result['message'] = f"模板文件不存在: {template_file.name}"
+            return result
+
+        try:
+            wb_out = openpyxl.load_workbook(str(template_file))
+            ws_inv1 = wb_out['INV1']
+            self._write_header(ws_inv1, first_header)
+
+            if manual_data and manual_data.get('date'):
+                ws_inv1['J9'] = manual_data['date']
+            if manual_data and manual_data.get('invoice_no'):
+                ws_inv1['J10'] = manual_data['invoice_no']
+                ws_inv1['J10'].alignment = Alignment(horizontal='left', vertical='top')
+
+            if transport == '海运':
+                ws_inv1['A38'] = 'CONTAINER NO / SEAL NO:'
+                if manual_data and manual_data.get('container_info'):
+                    lines = manual_data['container_info'].split('\n')
+                    for i, line in enumerate(lines[:3]):
+                        ws_inv1[f'A{39 + i}'] = line
+
+            if delivery_to and delivery_to in self.consignee_data:
+                consignee = self.consignee_data[delivery_to]
+                for r in range(9, 16):
+                    ws_inv1[f'B{r}'] = None
+                ws_inv1['B9'] = consignee['name']
+                for i, addr_line in enumerate(consignee['address']):
+                    ws_inv1[f'B{10+i}'] = addr_line
+                addr_count = len(consignee['address'])
+                ws_inv1[f'B{10+addr_count}'] = consignee['tel']
+                ws_inv1[f'B{11+addr_count}'] = consignee['email']
+                ws_inv1[f'B{12+addr_count}'] = consignee['vat']
+
+            all_po = []
+            all_invoice_nos = []
+            for data in group_data:
+                all_po.extend(data['po_data'])
+                if data['invoice_no']:
+                    all_invoice_nos.append(str(data['invoice_no']).strip())
+
+            if not all_po:
+                result['message'] = "无面料数据"
+                return result
+
+            net_weight_sum = sum(po['net_weight'] for po in all_po)
+            ratio = 0.94
+            for key in self.weight_ratios:
+                if key.lower() in ship_mode.lower():
+                    ratio = self.weight_ratios[key]
+                    break
+            customs_weight = int(net_weight_sum * ratio)
+
+            fabric_type_data = defaultdict(lambda: {'weight': 0.0, 'descriptions': defaultdict(float)})
+            for po in all_po:
+                ft = po['fabric_type'] or 'UNKNOWN'
+                fabric_type_data[ft]['weight'] += po['net_weight']
+                fabric_type_data[ft]['descriptions'][po['description']] += po['net_weight']
+
+            sorted_ft = sorted(fabric_type_data.items(), key=lambda x: -x[1]['weight'])
+
+            saved_merges = []
+            for m in list(ws_inv1.merged_cells.ranges):
+                if m.min_row >= 24 and m.max_row <= 36:
+                    saved_merges.append((str(m), m.min_row, m.min_col, m.max_row, m.max_col))
+                    ws_inv1.unmerge_cells(str(m))
+
+            for r in range(24, 37):
+                for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
+                    cell = ws_inv1[f'{col}{r}']
+                    if not isinstance(cell, openpyxl.cell.cell.MergedCell):
+                        cell.value = None
+
+            ws_inv1['A24'] = 'N/M'
+
+            from copy import copy as copy_cell
+            desc_font = copy_cell(ws_inv1['D25'].font)
+            desc_alignment = copy_cell(ws_inv1['D25'].alignment)
+            desc_border = copy_cell(ws_inv1['D25'].border)
+            desc_fill = copy_cell(ws_inv1['D25'].fill)
+            desc_number_format = ws_inv1['D25'].number_format
+
+            cur_row = 24
+            total_amount = 0
+            for ft, fdata in sorted_ft:
+                ft_weight = fdata['weight']
+                ft_descs = fdata['descriptions']
+                customs_w = int(ft_weight * ratio)
+                ft_price = self._lookup_price('Eastex', ft)
+                ft_amount = round(ft_weight * ratio * ft_price, 2)
+                total_amount += ft_amount
+
+                ws_inv1[f'D{cur_row}'] = ft.upper()
+                ws_inv1[f'G{cur_row}'] = customs_w
+                ws_inv1[f'H{cur_row}'] = 'KGS'
+                ws_inv1[f'I{cur_row}'] = ft_price
+                ws_inv1[f'J{cur_row}'] = ft_amount
+                for col in ['D', 'G', 'H', 'I', 'J']:
+                    copy_cell_format_src = ws_inv1[f'{col}24']
+                    copy_cell_format_dst = ws_inv1[f'{col}{cur_row}']
+                    if copy_cell_format_src.has_style:
+                        copy_cell_format_dst.font = copy_cell(copy_cell_format_src.font)
+                        copy_cell_format_dst.alignment = copy_cell(copy_cell_format_src.alignment)
+                        copy_cell_format_dst.border = copy_cell(copy_cell_format_src.border)
+                        copy_cell_format_dst.fill = copy_cell(copy_cell_format_src.fill)
+                        copy_cell_format_dst.number_format = copy_cell_format_src.number_format
+                cur_row += 1
+
+                for desc in ft_descs:
+                    ws_inv1[f'D{cur_row}'] = desc
+                    ws_inv1[f'D{cur_row}'].font = copy_cell(desc_font)
+                    ws_inv1[f'D{cur_row}'].alignment = copy_cell(desc_alignment)
+                    ws_inv1[f'D{cur_row}'].border = copy_cell(desc_border)
+                    ws_inv1[f'D{cur_row}'].fill = copy_cell(desc_fill)
+                    ws_inv1[f'D{cur_row}'].number_format = desc_number_format
+                    cur_row += 1
+
+            ref_row = 30
+            ref_value = ' '.join(all_invoice_nos)
+            for merge_info in saved_merges:
+                coord, min_r, min_c, max_r, max_c = merge_info
+                try:
+                    ws_inv1.merge_cells(coord)
+                except Exception:
+                    pass
+            ws_inv1[f'A{ref_row}'] = f"REF:{ref_value}"
+
+            if 'InputTable' in wb_out.sheetnames:
+                del wb_out['InputTable']
+
+            for i, data in enumerate(group_data):
+                inv_no = str(data['invoice_no']).strip() if data.get('invoice_no') else f'file{i}'
+                src_wb = openpyxl.load_workbook(str(data['file_path']), data_only=True)
+                if i == 0:
+                    if 'InputTable' in src_wb.sheetnames:
+                        self.copy_sheet_with_format(src_wb, 'InputTable', wb_out, 'InputTable')
+                else:
+                    if 'InputTable' in src_wb.sheetnames:
+                        self.copy_sheet_with_format(src_wb, 'InputTable', wb_out, f'InputTable_{inv_no}')
+                src_wb.close()
+
+            # 汇总件数和毛重
+            total_rolls = sum(data.get('rolls', 0) for data in group_data)
+            total_gross_weight = sum(data.get('gross_weight', 0) for data in group_data)
+
+            # 写入PKL sheet的件数和毛重
+            if 'PKL1' in wb_out.sheetnames:
+                ws_pkl = wb_out['PKL1']
+                ws_pkl['A24'] = total_rolls
+                ws_pkl['B24'] = 'PACKS'
+                ws_pkl['K24'] = total_gross_weight
+                
+                # 清空多余行的公式（避免显示0）
+                for row in range(cur_row, 38):
+                    ws_pkl[f'E{row}'] = None
+                    ws_pkl[f'H{row}'] = None
+                    ws_pkl[f'J{row}'] = None
+                    ws_pkl[f'K{row}'] = None
+                
+                # 清空A39-A42的公式（引用INV1空单元格会显示0）
+                for row in range(39, 43):
+                    ws_pkl[f'A{row}'] = None
+                    ws_pkl[f'H{row}'] = None
+
+            temp_file = output_file.parent / (output_file.stem + "_vbatmp.xlsx")
+            wb_out.save(str(temp_file))
+            wb_out.close()
+
+            if output_file.exists():
+                try:
+                    output_file.unlink()
+                except PermissionError:
+                    pass
+
+            carrier = Path(first_data['file_path'])
+            if self._inject_vba(temp_file, carrier, output_file):
+                temp_file.unlink(missing_ok=True)
+            else:
+                temp_file.replace(output_file)
+
+            result['success'] = True
+            result['message'] = f"-> {output_file}"
+            result['invoice_no'] = ' '.join(all_invoice_nos)
+            result['weight'] = customs_weight
+            result['amount'] = total_amount
+            print(f"  [OK] 生成: {output_file.name}")
+            print(f"  发票号: {result['invoice_no']} | 重量: {customs_weight}KG | 金额: ${total_amount:,.2f}")
+
+        except Exception as e:
+            result['message'] = f"生成失败: {e}"
+            print(f"  [ERROR] 生成失败: {e}")
+
+        return result
+
+    def _write_header(self, ws, header):
+        """写入抬头到worksheet"""
+        if not header or not header.get('company_name'):
+            return
+
+        from copy import copy as copy_style
+        from openpyxl.styles import Alignment
+
+        # 取消A1-A4的合并
+        for m in list(ws.merged_cells.ranges):
+            if m.min_row <= 4 and m.max_row >= 1 and m.min_col <= 1 and m.max_col >= 1:
+                ws.unmerge_cells(str(m))
+
+        ws['A1'] = header['company_name']
+        font1 = copy_style(ws['A1'].font)
+        font1.bold = True
+        font1.size = 18
+        ws['A1'].font = font1
+        ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+
+        address_phone = header.get('address_phone', '')
+        if address_phone:
+            ws['A2'] = address_phone
+            font2 = copy_style(ws['A2'].font)
+            font2.bold = True
+            font2.size = 16
+            ws['A2'].font = font2
+            ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
+
+        ws['A3'] = ''
+        ws['A4'] = ''
+        if ws['A3'].hyperlink:
+            ws['A3'].hyperlink = None
+        if ws['A4'].hyperlink:
+            ws['A4'].hyperlink = None
+
+        ws.merge_cells('A1:J1')
+        ws.merge_cells('A2:J2')
 
     def _generate_output(self, company, transport, group_data, manual_data):
         """生成一个输出文件（.xlsm：openpyxl 保留全部格式，zip 层注入 VBA）"""
@@ -475,7 +777,7 @@ class InvoiceProcessor:
                 ft_weight = fdata['weight']
                 ft_descs = fdata['descriptions']
                 customs_w = int(ft_weight * ratio)
-                ft_price = self._lookup_price(company, ft)
+                ft_price = self._lookup_price('Eastex', ft)
                 ft_amount = round(ft_weight * ratio * ft_price, 2)
 
                 ws_out[f'D{cur_row}'] = ft.upper()
@@ -498,7 +800,7 @@ class InvoiceProcessor:
 
             ref_row = cur_row
             ref_value = ' '.join(all_invoice_nos) if all_invoice_nos else ''
-            ws_out[f'A{ref_row}'] = f"REF:{ref_value}"
+            print(f"  [DEBUG] cur_row={cur_row}, ref_row={ref_row}, REF:REF:{ref_value}")
 
             for merge_info in saved_merges:
                 coord, min_r, min_c, max_r, max_c = merge_info
@@ -506,6 +808,20 @@ class InvoiceProcessor:
                     ws_out.merge_cells(coord)
                 except Exception:
                     pass
+
+            # REF写入放在恢复合并之后
+            ws_out[f'A{ref_row}'] = f"REF:{ref_value}"
+            # 手动设置REF行边框（与数据区域一致）
+            from openpyxl.styles import Border, Side
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style=None),
+                bottom=Side(style=None)
+            )
+            # 只给A列设置边框（REF文本所在列）
+            ws_out[f'A{ref_row}'].border = thin_border
+            print(f"  [DEBUG] 写入 A{ref_row} = REF:{ref_value}")
 
             if transport == '海运':
                 ws_out['A38'] = 'CONTAINER NO / SEAL NO:'
@@ -523,6 +839,19 @@ class InvoiceProcessor:
                 src_wb = openpyxl.load_workbook(str(data['file_path']), data_only=True)
                 self.copy_sheet_with_format(src_wb, 'InputTable', wb_out, f"InputTable_{inv_no}")
                 src_wb.close()
+
+            # 从第一个源文件读取抬头并写入目标文件（放在最后，防止被覆盖）
+            first_header = first_data.get('header')
+            if first_header and first_header.get('company_name'):
+                ws_out['A1'] = first_header['company_name']
+                address_phone = first_header.get('address_phone', '')
+                if address_phone:
+                    ws_out['A2'] = address_phone
+                # 清空行3和行4（包括超链接）
+                ws_out['A3'] = ''
+                ws_out['A4'] = ''
+                ws_out['A3'].hyperlink = None
+                ws_out['A4'].hyperlink = None
 
             # 先存成临时 .xlsx，再注入 VBA 变成 .xlsm
             temp_file = output_file.parent / (output_file.stem + "_vbatmp.xlsx")
@@ -594,6 +923,12 @@ class InvoiceGUI:
         ttk.Label(f2, text="Invoice No:", width=15).pack(side=tk.LEFT)
         self.invoice_entry = ttk.Entry(f2)
         self.invoice_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        f2b = ttk.Frame(input_frame)
+        f2b.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(f2b, text="供应商名:", width=15).pack(side=tk.LEFT)
+        self.supplier_entry = ttk.Entry(f2b)
+        self.supplier_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         f3 = ttk.Frame(input_frame)
         f3.pack(fill=tk.X, pady=(0, 5))
@@ -720,6 +1055,7 @@ class InvoiceGUI:
         manual_data = {
             'date': self.date_entry.get().strip(),
             'invoice_no': self.invoice_entry.get().strip(),
+            'supplier': self.supplier_entry.get().strip(),
             'output_name': self.output_name_entry.get().strip(),
             'output_dir': self.output_dir_var.get().strip(),
             'container_info': self.container_text.get("1.0", tk.END).strip()
