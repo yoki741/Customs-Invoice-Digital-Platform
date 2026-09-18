@@ -513,7 +513,7 @@ class InvoiceProcessor:
                     ws_inv1[f'D{cur_row}'].number_format = desc_number_format
                     cur_row += 1
 
-            ref_row = 30
+            ref_row = max(cur_row, 36)  # 至少在36行（Total上面）
             ref_value = ' '.join(all_bill_nos)
             for merge_info in saved_merges:
                 coord, min_r, min_c, max_r, max_c = merge_info
@@ -798,7 +798,7 @@ class InvoiceProcessor:
                     ws_out[f'D{cur_row}'].number_format = desc_number_format
                     cur_row += 1
 
-            ref_row = cur_row
+            ref_row = max(cur_row, 36)  # 至少在36行（Total上面）
             ref_value = ' '.join(all_bill_nos) if all_bill_nos else ''
             print(f"  [DEBUG] cur_row={cur_row}, ref_row={ref_row}, REF:REF:{ref_value}")
 
