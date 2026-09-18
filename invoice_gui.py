@@ -463,15 +463,26 @@ class InvoiceProcessor:
             sorted_ft = sorted(fabric_type_data.items(), key=lambda x: -x[1]['weight'])
 
             saved_merges = []
+            ref_unmerged_range = None
             for m in list(ws_inv1.merged_cells.ranges):
                 if m.min_row >= 24 and m.max_row <= total_row - 1:
                     top_cell = ws_inv1.cell(row=m.min_row, column=m.min_col)
                     if top_cell.value and 'REF:' in str(top_cell.value):
+                        ref_unmerged_range = (m.min_row, m.min_col, m.max_row, m.max_col)
                         ws_inv1.unmerge_cells(str(m))
                         top_cell.value = None
                         continue
                     saved_merges.append((str(m), m.min_row, m.min_col, m.max_row, m.max_col))
                     ws_inv1.unmerge_cells(str(m))
+
+            # 恢复模板REF区域为普通空行边框（左列左边线、右列右边线）
+            if ref_unmerged_range:
+                from openpyxl.styles import Border, Side
+                thin_side = Side(style='thin')
+                min_r, min_c, max_r, max_c = ref_unmerged_range
+                for r in range(min_r, max_r + 1):
+                    ws_inv1.cell(row=r, column=min_c).border = Border(left=thin_side)
+                    ws_inv1.cell(row=r, column=max_c).border = Border(right=thin_side)
 
             for r in range(24, total_row):
                 for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
@@ -533,10 +544,10 @@ class InvoiceProcessor:
                     pass
             ws_inv1[f'A{ref_row}'] = f"REF:{ref_value}"
 
-            # 清空集装箱区域模板数据，让用户手动输入
+            # 清空集装箱区域模板数据（只清A/B列，保留F列签名），让用户手动输入
             if container_row:
                 for r in range(container_row + 1, container_row + 10):
-                    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']:
+                    for col in ['A', 'B']:
                         cell = ws_inv1[f'{col}{r}']
                         if not isinstance(cell, openpyxl.cell.cell.MergedCell):
                             cell.value = None
