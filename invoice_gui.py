@@ -372,13 +372,16 @@ class InvoiceProcessor:
         supplier = (manual_data.get('supplier') or 'UNKNOWN').strip() if manual_data else 'UNKNOWN'
         bill_no = (manual_data.get('bill_no') or '').strip() if manual_data else ''
         
-        # 根据delivery_to确定后缀
+        # 根据delivery_to确定后缀和单价来源公司
         if 'EASTEX' in delivery_to.upper():
             suffix = '-BT'
+            company_for_price = 'Eastex'
         elif 'VANCO' in delivery_to.upper():
             suffix = '-CT'
+            company_for_price = 'Vanco'
         else:
             suffix = ''
+            company_for_price = 'Eastex'
         
         # 根据运输方式确定英文后缀
         if 'Air' in ship_mode:
@@ -505,7 +508,7 @@ class InvoiceProcessor:
                 ft_weight = fdata['weight']
                 ft_descs = fdata['descriptions']
                 customs_w = int(ft_weight * ratio)
-                ft_price = self._lookup_price('Eastex', ft)
+                ft_price = self._lookup_price(company_for_price, ft)
                 ft_amount = round(ft_weight * ratio * ft_price, 2)
                 total_amount += ft_amount
 
@@ -811,7 +814,7 @@ class InvoiceProcessor:
                 ft_weight = fdata['weight']
                 ft_descs = fdata['descriptions']
                 customs_w = int(ft_weight * ratio)
-                ft_price = self._lookup_price('Eastex', ft)
+                ft_price = self._lookup_price(company, ft)
                 ft_amount = round(ft_weight * ratio * ft_price, 2)
 
                 ws_out[f'D{cur_row}'] = ft.upper()
