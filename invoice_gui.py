@@ -178,7 +178,7 @@ class InvoiceProcessor:
         if ship_mode:
             ship_mode = ship_mode.strip()
         bill_to = ws['G4'].value
-        invoice_no = ws['C5'].value
+        bill_no = ws['C5'].value
         delivery_to = ws['G5'].value or ''
         if delivery_to:
             delivery_to = str(delivery_to).strip()
@@ -214,7 +214,7 @@ class InvoiceProcessor:
         return {
             'ship_mode': ship_mode,
             'bill_to': bill_to,
-            'invoice_no': invoice_no,
+            'bill_no': bill_no,
             'delivery_to': delivery_to,
             'po_data': po_data,
             'file_path': file_path,
@@ -351,7 +351,7 @@ class InvoiceProcessor:
             'file': '',
             'success': False,
             'message': '',
-            'invoice_no': '',
+            'bill_no': '',
             'company': '',
             'transport': '',
             'weight': 0,
@@ -370,7 +370,7 @@ class InvoiceProcessor:
 
         # 生成文件名：供应商名 INV#提单号-后缀(运输方式)
         supplier = (manual_data.get('supplier') or 'UNKNOWN').strip() if manual_data else 'UNKNOWN'
-        invoice_no = (manual_data.get('invoice_no') or '').strip() if manual_data else ''
+        bill_no = (manual_data.get('bill_no') or '').strip() if manual_data else ''
         
         # 根据delivery_to确定后缀
         if 'EASTEX' in delivery_to.upper():
@@ -388,7 +388,7 @@ class InvoiceProcessor:
         else:
             transport_suffix = 'SEA'
         
-        file_name = f"{supplier} INV#{invoice_no}{suffix}({transport_suffix})"
+        file_name = f"{supplier} INV#{bill_no}{suffix}({transport_suffix})"
         output_file = output_base / f"{file_name}.xlsm"
         result['file'] = file_name
 
@@ -407,8 +407,8 @@ class InvoiceProcessor:
 
             if manual_data and manual_data.get('date'):
                 ws_inv1['J9'] = manual_data['date']
-            if manual_data and manual_data.get('invoice_no'):
-                ws_inv1['J10'] = manual_data['invoice_no']
+            if manual_data and manual_data.get('bill_no'):
+                ws_inv1['J10'] = manual_data['bill_no']
                 ws_inv1['J10'].alignment = Alignment(horizontal='left', vertical='top')
 
             if transport == '海运':
@@ -431,11 +431,11 @@ class InvoiceProcessor:
                 ws_inv1[f'B{12+addr_count}'] = consignee['vat']
 
             all_po = []
-            all_invoice_nos = []
+            all_bill_nos = []
             for data in group_data:
                 all_po.extend(data['po_data'])
-                if data['invoice_no']:
-                    all_invoice_nos.append(str(data['invoice_no']).strip())
+                if data['bill_no']:
+                    all_bill_nos.append(str(data['bill_no']).strip())
 
             if not all_po:
                 result['message'] = "无面料数据"
@@ -514,7 +514,7 @@ class InvoiceProcessor:
                     cur_row += 1
 
             ref_row = 30
-            ref_value = ' '.join(all_invoice_nos)
+            ref_value = ' '.join(all_bill_nos)
             for merge_info in saved_merges:
                 coord, min_r, min_c, max_r, max_c = merge_info
                 try:
@@ -527,7 +527,7 @@ class InvoiceProcessor:
                 del wb_out['InputTable']
 
             for i, data in enumerate(group_data):
-                inv_no = str(data['invoice_no']).strip() if data.get('invoice_no') else f'file{i}'
+                inv_no = str(data['bill_no']).strip() if data.get('bill_no') else f'file{i}'
                 src_wb = openpyxl.load_workbook(str(data['file_path']), data_only=True)
                 if i == 0:
                     if 'InputTable' in src_wb.sheetnames:
@@ -578,11 +578,11 @@ class InvoiceProcessor:
 
             result['success'] = True
             result['message'] = f"-> {output_file}"
-            result['invoice_no'] = ' '.join(all_invoice_nos)
+            result['bill_no'] = ' '.join(all_bill_nos)
             result['weight'] = customs_weight
             result['amount'] = total_amount
             print(f"  [OK] 生成: {output_file.name}")
-            print(f"  发票号: {result['invoice_no']} | 重量: {customs_weight}KG | 金额: ${total_amount:,.2f}")
+            print(f"  提单号: {result['bill_no']} | 重量: {customs_weight}KG | 金额: ${total_amount:,.2f}")
 
         except Exception as e:
             result['message'] = f"生成失败: {e}"
@@ -636,7 +636,7 @@ class InvoiceProcessor:
             'file': f"{company}/{transport} ({len(group_data)}个文件)",
             'success': False,
             'message': '',
-            'invoice_no': '',
+            'bill_no': '',
             'company': company,
             'transport': transport,
             'weight': 0,
@@ -649,11 +649,11 @@ class InvoiceProcessor:
             return result
 
         all_po = []
-        all_invoice_nos = []
+        all_bill_nos = []
         for data in group_data:
             all_po.extend(data['po_data'])
-            if data['invoice_no']:
-                all_invoice_nos.append(str(data['invoice_no']).strip())
+            if data['bill_no']:
+                all_bill_nos.append(str(data['bill_no']).strip())
 
         if not all_po:
             result['message'] = "无面料数据"
@@ -701,8 +701,8 @@ class InvoiceProcessor:
             if manual_data and manual_data.get('date'):
                 ws_out['J9'] = manual_data['date']
 
-            if manual_data and manual_data.get('invoice_no'):
-                ws_out['J10'] = manual_data['invoice_no']
+            if manual_data and manual_data.get('bill_no'):
+                ws_out['J10'] = manual_data['bill_no']
                 ws_out['J10'].alignment = Alignment(horizontal='left', vertical='top')
 
             delivery_to = group_data[0].get('delivery_to', '')
@@ -799,7 +799,7 @@ class InvoiceProcessor:
                     cur_row += 1
 
             ref_row = cur_row
-            ref_value = ' '.join(all_invoice_nos) if all_invoice_nos else ''
+            ref_value = ' '.join(all_bill_nos) if all_bill_nos else ''
             print(f"  [DEBUG] cur_row={cur_row}, ref_row={ref_row}, REF:REF:{ref_value}")
 
             for merge_info in saved_merges:
@@ -835,7 +835,7 @@ class InvoiceProcessor:
                 del wb_out['InputTable']
 
             for data in group_data:
-                inv_no = str(data['invoice_no']).strip() if data.get('invoice_no') else 'input'
+                inv_no = str(data['bill_no']).strip() if data.get('bill_no') else 'input'
                 src_wb = openpyxl.load_workbook(str(data['file_path']), data_only=True)
                 self.copy_sheet_with_format(src_wb, 'InputTable', wb_out, f"InputTable_{inv_no}")
                 src_wb.close()
@@ -874,12 +874,12 @@ class InvoiceProcessor:
 
             result['success'] = True
             result['message'] = f"-> {output_file}"
-            result['invoice_no'] = ' '.join(all_invoice_nos)
+            result['bill_no'] = ' '.join(all_bill_nos)
             result['weight'] = customs_weight
             result['amount'] = total_amount
             print(f"  [OK] 生成: {output_file.name}")
             print(f"  公司: {company} | 运输: {transport}")
-            print(f"  发票号: {result['invoice_no']} | 重量: {customs_weight}KG | 金额: ${total_amount:,.2f}")
+            print(f"  提单号: {result['bill_no']} | 重量: {customs_weight}KG | 金额: ${total_amount:,.2f}")
 
         except Exception as e:
             result['message'] = f"生成失败: {e}"
@@ -1054,7 +1054,7 @@ class InvoiceGUI:
             return
         manual_data = {
             'date': self.date_entry.get().strip(),
-            'invoice_no': self.invoice_entry.get().strip(),
+            'bill_no': self.invoice_entry.get().strip(),
             'supplier': self.supplier_entry.get().strip(),
             'output_name': self.output_name_entry.get().strip(),
             'output_dir': self.output_dir_var.get().strip(),
@@ -1086,10 +1086,10 @@ class InvoiceGUI:
                 success += 1
                 self.log(f"[OK] {r['file']}", "success")
                 self.log(f"     {r['message']}", "success")
-                self.log(f"     发票号:{r['invoice_no']} | {r['weight']}KG | ${r['amount']:,.2f}", "success")
+                self.log(f"     提单号:{r['bill_no']} | {r['weight']}KG | ${r['amount']:,.2f}", "success")
                 print(f"[OK] {r['file']}")
                 print(f"     {r['message']}")
-                print(f"     发票号:{r['invoice_no']} | {r['weight']}KG | ${r['amount']:,.2f}")
+                print(f"     提单号:{r['bill_no']} | {r['weight']}KG | ${r['amount']:,.2f}")
             else:
                 self.log(f"[ERROR] {r['file']}: {r['message']}", "error")
                 print(f"[ERROR] {r['file']}: {r['message']}")
