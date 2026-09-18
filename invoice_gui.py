@@ -920,7 +920,7 @@ class InvoiceGUI:
 
         f2 = ttk.Frame(input_frame)
         f2.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(f2, text="Invoice No:", width=15).pack(side=tk.LEFT)
+        ttk.Label(f2, text="提单号:", width=15).pack(side=tk.LEFT)
         self.invoice_entry = ttk.Entry(f2)
         self.invoice_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
