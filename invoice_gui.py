@@ -930,12 +930,6 @@ class InvoiceGUI:
         self.supplier_entry = ttk.Entry(f2b)
         self.supplier_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        f3 = ttk.Frame(input_frame)
-        f3.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(f3, text="输出文件名:", width=15).pack(side=tk.LEFT)
-        self.output_name_entry = ttk.Entry(f3)
-        self.output_name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
         f4 = ttk.Frame(input_frame)
         f4.pack(fill=tk.X, pady=(0, 5))
         ttk.Label(f4, text="输出目录:", width=15).pack(side=tk.LEFT)
@@ -1056,7 +1050,6 @@ class InvoiceGUI:
             'date': self.date_entry.get().strip(),
             'bill_no': self.invoice_entry.get().strip(),
             'supplier': self.supplier_entry.get().strip(),
-            'output_name': self.output_name_entry.get().strip(),
             'output_dir': self.output_dir_var.get().strip(),
             'container_info': self.container_text.get("1.0", tk.END).strip()
         }
