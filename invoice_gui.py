@@ -411,6 +411,13 @@ class InvoiceProcessor:
                 ws_inv1['J10'] = manual_data['bill_no']
                 ws_inv1['J10'].alignment = Alignment(horizontal='left', vertical='top')
 
+            if transport == '海运':
+                ws_inv1['A38'] = 'CONTAINER NO / SEAL NO:'
+                if manual_data and manual_data.get('container_info'):
+                    lines = manual_data['container_info'].split('\n')
+                    for i, line in enumerate(lines[:3]):
+                        ws_inv1[f'A{39 + i}'] = line
+
             if delivery_to and delivery_to in self.consignee_data:
                 consignee = self.consignee_data[delivery_to]
                 for r in range(9, 16):
@@ -456,7 +463,7 @@ class InvoiceProcessor:
                     saved_merges.append((str(m), m.min_row, m.min_col, m.max_row, m.max_col))
                     ws_inv1.unmerge_cells(str(m))
 
-            for r in range(24, 51):
+            for r in range(24, 37):
                 for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
                     cell = ws_inv1[f'{col}{r}']
                     if not isinstance(cell, openpyxl.cell.cell.MergedCell):
@@ -506,7 +513,7 @@ class InvoiceProcessor:
                     ws_inv1[f'D{cur_row}'].number_format = desc_number_format
                     cur_row += 1
 
-            ref_row = cur_row + 13
+            ref_row = 30
             ref_value = ' '.join(all_bill_nos)
             for merge_info in saved_merges:
                 coord, min_r, min_c, max_r, max_c = merge_info
@@ -515,15 +522,6 @@ class InvoiceProcessor:
                 except Exception:
                     pass
             ws_inv1[f'A{ref_row}'] = f"REF:{ref_value}"
-
-            # CONTAINER写入REF之后
-            if transport == '海运':
-                container_row = ref_row + 1
-                ws_inv1[f'A{container_row}'] = 'CONTAINER NO / SEAL NO:'
-                if manual_data and manual_data.get('container_info'):
-                    lines = manual_data['container_info'].split('\n')
-                    for i, line in enumerate(lines[:3]):
-                        ws_inv1[f'A{container_row + 1 + i}'] = line
 
             if 'InputTable' in wb_out.sheetnames:
                 del wb_out['InputTable']
@@ -551,14 +549,14 @@ class InvoiceProcessor:
                 ws_pkl['K24'] = total_gross_weight
                 
                 # 清空多余行的公式（避免显示0）
-                for row in range(cur_row, ref_row + 5):
+                for row in range(cur_row, 38):
                     ws_pkl[f'E{row}'] = None
                     ws_pkl[f'H{row}'] = None
                     ws_pkl[f'J{row}'] = None
                     ws_pkl[f'K{row}'] = None
                 
                 # 清空A39-A42的公式（引用INV1空单元格会显示0）
-                for row in range(ref_row + 1, ref_row + 5):
+                for row in range(39, 43):
                     ws_pkl[f'A{row}'] = None
                     ws_pkl[f'H{row}'] = None
 
@@ -726,7 +724,7 @@ class InvoiceProcessor:
                     saved_merges.append((str(m), m.min_row, m.min_col, m.max_row, m.max_col))
                     ws_out.unmerge_cells(str(m))
 
-            for r in range(24, 51):
+            for r in range(24, 37):
                 for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
                     cell = ws_out[f'{col}{r}']
                     if not isinstance(cell, openpyxl.cell.cell.MergedCell):
@@ -800,7 +798,7 @@ class InvoiceProcessor:
                     ws_out[f'D{cur_row}'].number_format = desc_number_format
                     cur_row += 1
 
-            ref_row = cur_row + 13
+            ref_row = cur_row
             ref_value = ' '.join(all_bill_nos) if all_bill_nos else ''
             print(f"  [DEBUG] cur_row={cur_row}, ref_row={ref_row}, REF:REF:{ref_value}")
 
@@ -825,14 +823,12 @@ class InvoiceProcessor:
             ws_out[f'A{ref_row}'].border = thin_border
             print(f"  [DEBUG] 写入 A{ref_row} = REF:{ref_value}")
 
-            # CONTAINER写入REF之后
             if transport == '海运':
-                container_row = ref_row + 1
-                ws_out[f'A{container_row}'] = 'CONTAINER NO / SEAL NO:'
+                ws_out['A38'] = 'CONTAINER NO / SEAL NO:'
                 if manual_data and manual_data.get('container_info'):
                     lines = manual_data['container_info'].split('\n')
                     for i, line in enumerate(lines[:3]):
-                        ws_out[f'A{container_row + 1 + i}'] = line
+                        ws_out[f'A{39 + i}'] = line
 
             # 删除模板自带的 InputTable（若有），再逐个复制源文件的 InputTable（含全部格式）
             if 'InputTable' in wb_out.sheetnames:
