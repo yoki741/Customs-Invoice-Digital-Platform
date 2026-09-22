@@ -461,6 +461,16 @@ class InvoiceProcessor:
             if manual_data and manual_data.get('ship_mode'):
                 ws_inv1['B17'] = manual_data['ship_mode']
 
+            # 陆运：起始收货地/装货港手动填写，其余港口信息固定
+            if transport == '陆运':
+                if manual_data and manual_data.get('place_receipt'):
+                    ws_inv1['A18'] = f"Place of initial receipt: {manual_data['place_receipt']}"
+                if manual_data and manual_data.get('port_loading'):
+                    ws_inv1['A19'] = f"Port of loading: {manual_data['port_loading']}"
+                # 清除模板残留的空格
+                if ws_inv1['F10'].value == ' ':
+                    ws_inv1['F10'] = None
+
             if delivery_to and delivery_to in self.consignee_data:
                 consignee = self.consignee_data[delivery_to]
                 for r in range(9, 16):
@@ -1034,6 +1044,18 @@ class InvoiceGUI:
         self.ship_mode_entry = ttk.Entry(f2c)
         self.ship_mode_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        f2d = ttk.Frame(input_frame)
+        f2d.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(f2d, text="起始收货地(陆运):", width=15).pack(side=tk.LEFT)
+        self.place_receipt_entry = ttk.Entry(f2d)
+        self.place_receipt_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        f2e = ttk.Frame(input_frame)
+        f2e.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(f2e, text="装货港(陆运):", width=15).pack(side=tk.LEFT)
+        self.port_loading_entry = ttk.Entry(f2e)
+        self.port_loading_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
         f4 = ttk.Frame(input_frame)
         f4.pack(fill=tk.X, pady=(0, 5))
         ttk.Label(f4, text="输出目录:", width=15).pack(side=tk.LEFT)
@@ -1155,6 +1177,8 @@ class InvoiceGUI:
             'bill_no': self.invoice_entry.get().strip(),
             'supplier': self.supplier_entry.get().strip(),
             'ship_mode': self.ship_mode_entry.get().strip(),
+            'place_receipt': self.place_receipt_entry.get().strip(),
+            'port_loading': self.port_loading_entry.get().strip(),
             'output_dir': self.output_dir_var.get().strip(),
             'container_info': self.container_text.get("1.0", tk.END).strip()
         }
