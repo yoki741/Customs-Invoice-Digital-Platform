@@ -60,32 +60,60 @@ class InvoiceProcessor:
         self.price_file = resource_dir / "Eastex Vanco CDC 布料单价.xlsx"
         self.weight_ratios = {"By Sea": 0.94, "By Air": 0.95, "By Truck": 0.94}
         self.transport_map = {"海运": "海运模板.xlsx", "空运": "空运模板.xlsx", "陆运": "陆运模板.xlsx"}
-        self.consignee_data = {
-            "EASTEX GARMENT CO., LTD.": {
-                "name": "EASTEX GARMENT CO., LTD.",
-                "address": [
-                    "PHUM TRAPEANG PO, SANGKAT CHOM CHAO,",
-                    "KHAN PO SENCHEY, PHNOM PENH, CAMBODIA"
-                ],
-                "tel": "TEL: 023 729 918/ 092648888",
-                "email": "EMAIL: CAMIMP@EASTEXGARMENT.COM",
-                "vat": "VAT# L001-100163327"
-            },
-            "VANCO INDUSTRIAL CO., LTD.": {
-                "name": "VANCO INDUSTRIAL CO., LTD.",
-                "address": [
-                    "NATIONAL ROAD NO.4, PHUM CHORK,",
-                    "KHUM BEIK CHAN, SROK ANGSNEURL,",
-                    "KANDAL PROVINCE, CAMBODIA"
-                ],
-                "tel": "TEL: 855-12921388 / 092648888",
-                "email": "EMAIL: camimp@eastexgarment.com",
-                "vat": "VAT # L001-150000294"
-            }
-        }
+        self.consignee_data = {}
+        self._load_consignee_from_templates()
         self._price_cache = None
         self._load_price_file()
         self._check_template_files()
+
+    def _load_consignee_from_templates(self):
+        """从模板读取收货人信息（EASTEX/VANCO两种）
+
+        EASTEX 从空运模板读取，VANCO 从海运模板读取。
+        解析 B9(名称)、B10起(地址行)、TEL/EMAIL/VAT 行。
+        """
+        mapping = {
+            '空运模板.xlsx': 'EASTEX',
+            '海运模板.xlsx': 'VANCO',
+        }
+        for tpl_name, label in mapping.items():
+            tpl_path = self.template_dir / tpl_name
+            if not tpl_path.exists():
+                continue
+            try:
+                wb = openpyxl.load_workbook(str(tpl_path))
+                ws = wb['INV1']
+                name = ws['B9'].value
+                if not name:
+                    wb.close()
+                    continue
+                lines = []
+                for r in range(10, 16):
+                    v = ws[f'B{r}'].value
+                    if v is not None and str(v).strip():
+                        lines.append(str(v).strip())
+                wb.close()
+                address = []
+                tel = email = vat = ''
+                for line in lines:
+                    up = line.upper()
+                    if up.startswith('TEL'):
+                        tel = line
+                    elif up.startswith('EMAIL'):
+                        email = line
+                    elif up.startswith('VAT'):
+                        vat = line
+                    else:
+                        address.append(line)
+                self.consignee_data[str(name).strip()] = {
+                    'name': str(name).strip(),
+                    'address': address,
+                    'tel': tel,
+                    'email': email,
+                    'vat': vat
+                }
+            except Exception as e:
+                print(f"读取模板收货人失败 {tpl_name}: {e}")
 
     def _check_template_files(self):
         """预检模板文件是否存在并输出位置"""
@@ -362,16 +390,21 @@ class InvoiceProcessor:
             output_base = Path(manual_data['output_dir'])
         else:
             output_base = self.output_dir
+
+        # 生成文件名：供应商名 INV#提单号-后缀(运输方式)
+        supplier = (manual_data.get('supplier') or 'UNKNOWN').strip() if manual_data else 'UNKNOWN'
+        bill_no = (manual_data.get('bill_no') or '').strip() if manual_data else ''
+
+        # 输出到以提单号命名的文件夹
+        if bill_no:
+            folder_name = re.sub(r'[\\/:*?"<>|]', '_', bill_no)
+            output_base = output_base / folder_name
         output_base.mkdir(parents=True, exist_ok=True)
 
         first_data = group_data[0]
         first_header = first_data.get('header')
         ship_mode = first_data.get('ship_mode', '')
 
-        # 生成文件名：供应商名 INV#提单号-后缀(运输方式)
-        supplier = (manual_data.get('supplier') or 'UNKNOWN').strip() if manual_data else 'UNKNOWN'
-        bill_no = (manual_data.get('bill_no') or '').strip() if manual_data else ''
-        
         # 根据delivery_to确定后缀和单价来源公司
         if 'EASTEX' in delivery_to.upper():
             suffix = '-BT'
@@ -489,7 +522,8 @@ class InvoiceProcessor:
                     ws_inv1.cell(row=r, column=min_c).border = Border(left=thin_side)
                     ws_inv1.cell(row=r, column=max_c).border = Border(right=thin_side)
 
-            for r in range(24, total_row):
+            # 清除模板数据区残留（含空运/陆运模板A23的N/M）
+            for r in range(23, total_row):
                 for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
                     cell = ws_inv1[f'{col}{r}']
                     if not isinstance(cell, openpyxl.cell.cell.MergedCell):
