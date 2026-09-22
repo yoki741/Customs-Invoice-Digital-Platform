@@ -215,6 +215,13 @@ class InvoiceProcessor:
         rolls = ws['G14'].value or 0
         gross_weight = ws['I14'].value or 0
 
+        # 读取船名/航班号/车次（Vessel/Flight/Truck Info）
+        vessel_flight = ws['C7'].value
+        if vessel_flight:
+            vessel_flight = str(vessel_flight).strip()
+        else:
+            vessel_flight = ''
+
         po_data = []
         for row in range(17, 45):
             desc = ws[f'C{row}'].value
@@ -248,7 +255,8 @@ class InvoiceProcessor:
             'file_path': file_path,
             'header': header,
             'rolls': float(rolls),
-            'gross_weight': float(gross_weight)
+            'gross_weight': float(gross_weight),
+            'vessel_flight': vessel_flight
         }
 
     def copy_sheet_with_format(self, src_wb, src_sheet_name, dst_wb, dst_sheet_name):
@@ -644,6 +652,11 @@ class InvoiceProcessor:
                 # 设置描述列E（镜像INV1的D列）
                 for r in range(24, cur_row):
                     ws_pkl[f'E{r}'] = f"='INV1'!D{r}"
+
+                # 空运：Flight No.从源文件C7自动取值（多文件取第一个）
+                if transport == '空运':
+                    vf = first_data.get('vessel_flight', '')
+                    ws_pkl['I17'] = vf if vf else None
 
                 if pkl_ref_row:
                     # 清除模板样例残留（行25到REF行之前）
