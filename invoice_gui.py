@@ -617,21 +617,46 @@ class InvoiceProcessor:
             # 写入PKL sheet的件数和毛重
             if 'PKL1' in wb_out.sheetnames:
                 ws_pkl = wb_out['PKL1']
+
+                # 动态定位PKL1的REF行（空运/海运A33，陆运A35）
+                pkl_ref_row = None
+                for r in range(24, 55):
+                    v = ws_pkl[f'A{r}'].value
+                    if v and 'REF' in str(v):
+                        pkl_ref_row = r
+                        break
+
+                # 写入件数/单位/毛重（第24行）
                 ws_pkl['A24'] = total_rolls
                 ws_pkl['B24'] = 'PACKS'
                 ws_pkl['K24'] = total_gross_weight
-                
-                # 清空多余行的公式（避免显示0）
-                for row in range(cur_row, 38):
-                    ws_pkl[f'E{row}'] = None
-                    ws_pkl[f'H{row}'] = None
-                    ws_pkl[f'J{row}'] = None
-                    ws_pkl[f'K{row}'] = None
-                
-                # 清空A39-A42的公式（引用INV1空单元格会显示0）
-                for row in range(39, 43):
-                    ws_pkl[f'A{row}'] = None
-                    ws_pkl[f'H{row}'] = None
+
+                # 设置描述列E（镜像INV1的D列）
+                for r in range(24, cur_row):
+                    ws_pkl[f'E{r}'] = f"='INV1'!D{r}"
+
+                if pkl_ref_row:
+                    # 清除模板样例残留（行25到REF行之前）
+                    for r in range(25, pkl_ref_row):
+                        for col in ['A', 'B', 'H', 'I', 'J', 'K']:
+                            cell = ws_pkl[f'{col}{r}']
+                            if not isinstance(cell, openpyxl.cell.cell.MergedCell):
+                                cell.value = None
+                    for r in range(cur_row, pkl_ref_row):
+                        cell = ws_pkl[f'E{r}']
+                        if not isinstance(cell, openpyxl.cell.cell.MergedCell):
+                            cell.value = None
+                    # 写入PKL1的REF（与INV1一致，自动取源文件Invoice No.）
+                    ws_pkl[f'A{pkl_ref_row}'] = f"REF:{ref_value}"
+
+                # 清空汇总区引用INV1空单元格的公式（避免显示0）
+                for row in range(pkl_ref_row + 1, pkl_ref_row + 8) if pkl_ref_row else range(39, 43):
+                    cell_a = ws_pkl[f'A{row}']
+                    cell_h = ws_pkl[f'H{row}']
+                    if cell_a.value and str(cell_a.value).startswith("='INV1'"):
+                        cell_a.value = None
+                    if cell_h.value and str(cell_h.value).startswith("='INV1'"):
+                        cell_h.value = None
 
             temp_file = output_file.parent / (output_file.stem + "_vbatmp.xlsx")
             wb_out.save(str(temp_file))
