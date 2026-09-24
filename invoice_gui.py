@@ -1069,13 +1069,13 @@ class InvoiceGUI:
 
         f2d = ttk.Frame(input_frame)
         f2d.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(f2d, text="起运地:", width=15).pack(side=tk.LEFT)
+        ttk.Label(f2d, text="装货港/机场:", width=15).pack(side=tk.LEFT)
         self.place_receipt_entry = ttk.Entry(f2d)
         self.place_receipt_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         f2e = ttk.Frame(input_frame)
         f2e.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(f2e, text="装货港(陆运):", width=15).pack(side=tk.LEFT)
+        ttk.Label(f2e, text="陆运口岸:", width=15).pack(side=tk.LEFT)
         self.port_loading_entry = ttk.Entry(f2e)
         self.port_loading_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
