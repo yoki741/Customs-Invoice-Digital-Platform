@@ -469,10 +469,20 @@ class InvoiceProcessor:
             if manual_data and manual_data.get('ship_mode'):
                 ws_inv1['B17'] = manual_data['ship_mode']
 
-            # 陆运：起始收货地/装货港手动填写，其余港口信息固定
+            # 起运地：三种运输都手动填写A18（保留模板标签及冒号后空格）
+            if manual_data and manual_data.get('place_receipt'):
+                a18_val = str(ws_inv1['A18'].value or '')
+                if ':' in a18_val:
+                    idx = a18_val.index(':')
+                    prefix = a18_val[:idx + 1]
+                    if len(a18_val) > idx + 1 and a18_val[idx + 1] == ' ':
+                        prefix += ' '
+                else:
+                    prefix = 'Origin: '
+                ws_inv1['A18'] = f"{prefix}{manual_data['place_receipt']}"
+
+            # 陆运：装货港手动填写A19，其余港口信息固定
             if transport == '陆运':
-                if manual_data and manual_data.get('place_receipt'):
-                    ws_inv1['A18'] = f"Place of initial receipt: {manual_data['place_receipt']}"
                 if manual_data and manual_data.get('port_loading'):
                     ws_inv1['A19'] = f"Port of loading: {manual_data['port_loading']}"
                 # 清除模板残留的空格
@@ -1059,7 +1069,7 @@ class InvoiceGUI:
 
         f2d = ttk.Frame(input_frame)
         f2d.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(f2d, text="起始收货地(陆运):", width=15).pack(side=tk.LEFT)
+        ttk.Label(f2d, text="起运地:", width=15).pack(side=tk.LEFT)
         self.place_receipt_entry = ttk.Entry(f2d)
         self.place_receipt_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
