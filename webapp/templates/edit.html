@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}编辑 / 导出 - 報關發票數字化管理平台{% endblock %}
+{% block heading %}编辑 / 导出{% endblock %}
+{% block crumb %}
+{% for i in invoices %}<span class="badge badge-role">{{ i.invoice_no }}</span> {% endfor %}
+<span id="status" class="small text-muted ms-2"></span>
+{% endblock %}
 
 {% block head %}
 <link rel="stylesheet" href="/static/vendor/univer.css">
@@ -18,21 +23,14 @@
 {% block content %}
 <div class="d-flex align-items-center gap-2 mb-2 no-print">
   <a class="btn btn-sm btn-outline-secondary" href="/invoices">← 返回列表</a>
-  <h5 class="mb-0">
-    报关发票编辑 / 导出
-    {% for i in invoices %}
-      <span class="badge text-bg-primary">{{ i.invoice_no }}</span>
-    {% endfor %}
-  </h5>
-  <span class="badge text-bg-secondary">{{ first.ship_mode or '-' }}</span>
-  <span class="badge text-bg-secondary">{{ first.delivery_to or '-' }}</span>
-  {% if invoices|length > 1 %}<span class="badge text-bg-success">合并 {{ invoices|length }} 张</span>{% endif %}
-  <span id="status" class="ms-auto small text-muted"></span>
+  <span class="badge" style="background:#e8efff;color:#1e5eff">{{ first.ship_mode or '-' }}</span>
+  <span class="badge" style="background:#eef2ff;color:#4338ca">{{ first.delivery_to or '-' }}</span>
+  {% if invoices|length > 1 %}<span class="badge" style="background:#dcfce7;color:#15803d">合并 {{ invoices|length }} 张</span>{% endif %}
 </div>
 
 <div class="row g-3">
   <div class="col-12 col-xl-4 no-print">
-    <div class="card shadow-sm">
+    <div class="card">
       <div class="card-header py-2 fw-semibold">人工填写字段（EXE 中需要手动输入的信息）</div>
       <div class="card-body">
         <div id="form-fields" class="row g-2"></div>
@@ -50,7 +48,7 @@
       </div>
     </div>
 
-    <div class="card shadow-sm mt-3" id="meta-card">
+    <div class="card mt-3" id="meta-card">
       <div class="card-header py-2 fw-semibold">自动计算（不可编辑）</div>
       <div class="card-body small">
         <div class="row g-2">
@@ -67,7 +65,7 @@
   </div>
 
   <div class="col-12 col-xl-8">
-    <div class="card shadow-sm">
+    <div class="card">
       <div class="card-header py-2 d-flex align-items-center gap-2">
         <span class="fw-semibold">Excel 预览</span>
         <div class="btn-group btn-group-sm">

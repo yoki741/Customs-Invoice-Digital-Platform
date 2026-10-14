@@ -1,45 +1,45 @@
 {% extends "base.html" %}
 {% block title %}导出历史 - 報關發票數字化管理平台{% endblock %}
+{% block heading %}导出历史{% endblock %}
+{% block crumb %}共 {{ total }} 条{% endblock %}
 {% block content %}
-<div class="card shadow-sm">
-  <div class="card-header py-2 d-flex align-items-center">
-    <span class="fw-semibold">导出历史</span>
-    <span class="text-muted small ms-2">共 {{ total }} 条</span>
-  </div>
+<div class="card">
   <div class="card-body p-0">
-    <table class="table table-sm align-middle mb-0">
-      <thead class="table-light">
-        <tr>
-          <th>时间</th><th>操作人</th><th>发票</th><th>文件</th>
-          <th class="text-end">报关重量</th><th class="text-end">金额</th><th>状态</th><th>填写内容</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in rows %}
-        <tr>
-          <td class="small">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-          <td>{{ r.created_by or '-' }}</td>
-          <td class="small">{{ r.invoice_nos }}</td>
-          <td class="small text-break">{{ r.filename or '-' }}</td>
-          <td class="text-end">{{ r.customs_weight or '-' }}</td>
-          <td class="text-end">{{ '%.2f' % r.total_amount if r.total_amount else '-' }}</td>
-          <td>
-            {% if r.success %}<span class="badge text-bg-success">成功</span>
-            {% else %}<span class="badge text-bg-danger">失败</span>{% endif %}
-          </td>
-          <td class="small text-muted" style="max-width:340px">
-            <details>
-              <summary class="text-decoration-underline">查看</summary>
-              <pre class="small mb-0 text-wrap">{{ r.form_values }}</pre>
-              {% if r.message %}<div class="text-danger">{{ r.message }}</div>{% endif %}
-            </details>
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="8" class="text-center text-muted py-4">暂无导出记录</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>时间</th><th>操作人</th><th>发票</th><th>文件</th>
+            <th class="num">报关重量</th><th class="num">金额</th><th>状态</th><th>填写内容</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="small">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ r.created_by or '-' }}</td>
+            <td class="small">{{ r.invoice_nos }}</td>
+            <td class="small text-break">{{ r.filename or '-' }}</td>
+            <td class="num">{{ r.customs_weight or '-' }}</td>
+            <td class="num">{{ '%.2f' % r.total_amount if r.total_amount else '-' }}</td>
+            <td>
+              {% if r.success %}<span class="badge" style="background:#dcfce7;color:#15803d">成功</span>
+              {% else %}<span class="badge" style="background:#fdeaea;color:#b91c1c">失败</span>{% endif %}
+            </td>
+            <td class="small text-muted" style="max-width:340px">
+              <details>
+                <summary class="text-decoration-underline">查看</summary>
+                <pre class="small mb-0 text-wrap">{{ r.form_values }}</pre>
+                {% if r.message %}<div class="text-danger">{{ r.message }}</div>{% endif %}
+              </details>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">暂无导出记录</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
   {% if pages > 1 %}
   <div class="card-footer d-flex justify-content-between">
