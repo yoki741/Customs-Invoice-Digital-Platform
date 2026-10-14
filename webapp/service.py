@@ -59,9 +59,10 @@ def build_for_edit(invoices: list[Invoice]) -> tuple[BuildResult, list[SourceDat
     sources = load_sources(invoices)
     groups = group_sources(sources)
     if len(groups) > 1:
+        names = [g[0].delivery_to or "UNKNOWN" for g in groups]
         raise ValueError(
             "选中的发票 Delivery to 不一致，无法合并导出："
-            + " / ".join(groups.keys())
+            + " / ".join(names)
         )
     exporter = get_exporter()
     result = exporter.build(groups[0], ManualFields())
