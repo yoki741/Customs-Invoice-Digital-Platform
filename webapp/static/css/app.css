@@ -85,6 +85,8 @@ a:hover { text-decoration: underline; }
 }
 .topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
 .topbar .crumb { color: var(--muted); font-size: 13px; }
+.topbar .btn { padding: .2rem .6rem; font-size: 12.5px; }
+@media (max-width: 1200px) { .topbar { height: auto; padding: 8px 16px; flex-wrap: wrap; } }
 .nav-toggle {
   display: none; background: none; border: 1px solid var(--border);
   border-radius: 8px; width: 34px; height: 34px; cursor: pointer; font-size: 16px;

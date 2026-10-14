@@ -57,7 +57,8 @@
   <header class="topbar no-print">
     <button class="nav-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
     <h1>{% block heading %}{% endblock %}</h1>
-    <span class="crumb ms-auto">{% block crumb %}{% endblock %}</span>
+    <span class="crumb">{% block crumb %}{% endblock %}</span>
+    <span class="ms-auto d-flex align-items-center gap-2">{% block topbar_actions %}{% endblock %}</span>
   </header>
 
   <main class="content">
