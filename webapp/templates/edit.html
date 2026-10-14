@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+{% block title %}编辑 / 导出 - 報關發票數字化管理平台{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="/static/vendor/univer.css">
+<style>
+  #grid {
+    width: 100%;
+    height: calc(100vh - 210px);
+    min-height: 520px;
+    position: relative;
+  }
+  .field-hint { font-size: .75rem; color: #6c757d; }
+  .required-star::after { content: " *"; color: #dc3545; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-2 no-print">
+  <a class="btn btn-sm btn-outline-secondary" href="/invoices">← 返回列表</a>
+  <h5 class="mb-0">
+    报关发票编辑 / 导出
+    {% for i in invoices %}
+      <span class="badge text-bg-primary">{{ i.invoice_no }}</span>
+    {% endfor %}
+  </h5>
+  <span class="badge text-bg-secondary">{{ first.ship_mode or '-' }}</span>
+  <span class="badge text-bg-secondary">{{ first.delivery_to or '-' }}</span>
+  {% if invoices|length > 1 %}<span class="badge text-bg-success">合并 {{ invoices|length }} 张</span>{% endif %}
+  <span id="status" class="ms-auto small text-muted"></span>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-4 no-print">
+    <div class="card shadow-sm">
+      <div class="card-header py-2 fw-semibold">人工填写字段（EXE 中需要手动输入的信息）</div>
+      <div class="card-body">
+        <div id="form-fields" class="row g-2"></div>
+        <div class="alert alert-info py-2 small mt-2 mb-0">
+          右侧 Excel 中黄色单元格即为需要填写的位置；填写后点击「生成 .xlsm」，
+          系统按模板生成报关发票 + 装箱单（含 VBA），与 EXE 输出一致。
+        </div>
+      </div>
+      <div class="card-footer d-flex gap-2">
+        <button class="btn btn-success flex-grow-1" id="btn-export" onclick="doExport()">
+          生成 .xlsm
+        </button>
+        <button class="btn btn-outline-secondary" id="btn-preview"
+                onclick="downloadPreview()">下载预填 xlsx</button>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3" id="meta-card">
+      <div class="card-header py-2 fw-semibold">自动计算（不可编辑）</div>
+      <div class="card-body small">
+        <div class="row g-2">
+          <div class="col-6"><span class="text-muted">运输方式</span><div id="m-transport">-</div></div>
+          <div class="col-6"><span class="text-muted">单价公司</span><div id="m-company">-</div></div>
+          <div class="col-6"><span class="text-muted">报关重量</span><div id="m-weight">-</div></div>
+          <div class="col-6"><span class="text-muted">总金额</span><div id="m-amount">-</div></div>
+          <div class="col-12"><span class="text-muted">输出文件名</span><div id="m-file" class="text-break">-</div></div>
+          <div class="col-12"><span class="text-muted">源文件</span>
+            <div id="m-source" class="text-break text-muted">-</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-8">
+    <div class="card shadow-sm">
+      <div class="card-header py-2 d-flex align-items-center gap-2">
+        <span class="fw-semibold">Excel 预览</span>
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-primary" onclick="InvoiceGrid.showSheet('INV1')">INV1 发票</button>
+          <button class="btn btn-outline-primary" onclick="InvoiceGrid.showSheet('PKL1')">PKL1 装箱单</button>
+        </div>
+        <span class="ms-auto small text-muted">模板：INV1 + PKL1</span>
+      </div>
+      <div class="card-body p-1">
+        <div id="grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vendor/univer.js"></script>
+<script>
+const IDS = {{ ids | tojson }};
+let META = null;
+let FIELDS = [];
+const cellToField = new Map();   // "SHEET!A1" -> {key, line}
+const inputs = new Map();        // key -> HTMLElement
+
+function a1Of(row, col) {
+  let n = col + 1, s = '';
+  while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
+  return s + (row + 1);
+}
+
+function buildForm(fields, meta) {
+  const box = document.getElementById('form-fields');
+  box.innerHTML = '';
+  inputs.clear();
+  cellToField.clear();
+
+  fields.filter(f => f.applicable).forEach(f => {
+    const wrap = document.createElement('div');
+    wrap.className = 'col-12';
+    const label = document.createElement('label');
+    label.className = 'form-label small mb-1' + (f.required ? ' required-star' : '');
+    label.textContent = f.label;
+    label.setAttribute('for', 'f-' + f.key);
+    wrap.appendChild(label);
+
+    let el;
+    if (f.multiline) {
+      el = document.createElement('textarea');
+      el.rows = 3;
+    } else {
+      el = document.createElement('input');
+      el.type = 'text';
+      if (f.key === 'date') el.type = 'date';
+      if (f.key === 'supplier') el.setAttribute('list', 'supplier-list');
+    }
+    el.className = 'form-control form-control-sm';
+    el.id = 'f-' + f.key;
+    el.dataset.key = f.key;
+    if (f.hint) el.title = f.hint;
+    el.addEventListener('input', () => onFormInput(f, el));
+    wrap.appendChild(el);
+    if (f.hint) {
+      const hint = document.createElement('div');
+      hint.className = 'field-hint';
+      hint.textContent = f.hint;
+      wrap.appendChild(hint);
+    }
+    box.appendChild(wrap);
+    inputs.set(f.key, el);
+
+    if (f.cell) {
+      cellToField.set(f.sheet + '!' + f.cell.toUpperCase(), { key: f.key });
+    }
+  });
+
+  // 集装箱区域的 2、3 行也回填到同一个文本域
+  if (meta.container_row) {
+    for (let i = 0; i < 3; i++) {
+      cellToField.set('INV1!A' + (meta.container_row + 1 + i), { key: 'container_info', line: i });
+    }
+  }
+
+  // 供应商候选
+  const dl = document.createElement('datalist');
+  dl.id = 'supplier-list';
+  ['VANCO', 'EASTEX', 'VANCO INDUSTRIAL', 'EASTEX GARMENT'].forEach(v => {
+    const o = document.createElement('option'); o.value = v; dl.appendChild(o);
+  });
+  box.appendChild(dl);
+}
+
+function applyDefaults(meta, first) {
+  const set = (key, value) => {
+    const el = inputs.get(key);
+    if (el && value) el.value = value;
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  set('date', today);
+  set('bill_no', first.invoice_no || '');
+  set('ship_mode', first.ship_mode || '');
+  set('flight_no', first.vessel_flight || '');
+  if (meta.delivery_to) {
+    const sup = /VANCO/i.test(meta.delivery_to) ? 'VANCO'
+              : /EASTEX|DAKOTA/i.test(meta.delivery_to) ? 'EASTEX' : '';
+    set('supplier', sup);
+  }
+  syncAllToGrid();
+}
+
+function onFormInput(field, el) {
+  if (field.cell) {
+    InvoiceGrid.setCellValue(field.sheet, field.cell, el.value);
+  } else if (field.multiline && META && META.container_row) {
+    const lines = el.value.split('\n');
+    for (let i = 0; i < 3; i++) {
+      InvoiceGrid.setCellValue('INV1', 'A' + (META.container_row + 1 + i), (lines[i] || '').trim());
+    }
+  }
+}
+
+function syncAllToGrid() {
+  inputs.forEach((el, key) => {
+    const field = FIELDS.find(f => f.key === key);
+    if (field) onFormInput(field, el);
+  });
+}
+
+function onGridChange(sheetName, coord, value) {
+  const hit = cellToField.get(sheetName + '!' + coord);
+  if (!hit) return;
+  const el = inputs.get(hit.key);
+  if (!el) return;
+  const text = (value === null || value === undefined) ? '' : String(value);
+  if (hit.line !== undefined) {
+    const lines = el.value.split('\n');
+    while (lines.length <= hit.line) lines.push('');
+    lines[hit.line] = text;
+    el.value = lines.join('\n');
+  } else {
+    el.value = text;
+  }
+}
+
+function collectForm() {
+  const form = {};
+  inputs.forEach((el, key) => { form[key] = el.value.trim(); });
+  return form;
+}
+
+function setStatus(text, cls) {
+  const el = document.getElementById('status');
+  el.textContent = text || '';
+  el.className = 'ms-auto small ' + (cls || 'text-muted');
+}
+
+async function loadSnapshot() {
+  setStatus('加载模板中...');
+  const res = await fetch('/api/invoices/snapshot?ids=' + encodeURIComponent(IDS));
+  const data = await res.json();
+  if (!data.ok) {
+    setStatus(data.error || '加载失败', 'text-danger');
+    alert(data.error || '加载失败');
+    return;
+  }
+  META = data.meta;
+  FIELDS = data.fields;
+  document.getElementById('m-transport').textContent = META.transport || '-';
+  document.getElementById('m-company').textContent = META.company || '-';
+  document.getElementById('m-weight').textContent = META.customs_weight + ' KGS';
+  document.getElementById('m-amount').textContent = '$' + Number(META.total_amount || 0).toLocaleString();
+  document.getElementById('m-file').textContent = META.file_stem + '.xlsm';
+  document.getElementById('m-source').textContent = META.source_filename || '-';
+
+  buildForm(FIELDS, META);
+  applyDefaults(META, {{ {'invoice_no': first.invoice_no, 'ship_mode': first.ship_mode,
+                          'vessel_flight': first.vessel_flight} | tojson }});
+  InvoiceGrid.load('grid', data.snapshot, data.editable, onGridChange);
+  setStatus('已就绪');
+}
+
+async function doExport() {
+  const form = collectForm();
+  const missing = FIELDS.filter(f => f.applicable && f.required && !form[f.key]);
+  if (missing.length) {
+    alert('请先填写：' + missing.map(f => f.label).join('、'));
+    const el = inputs.get(missing[0].key);
+    if (el) el.focus();
+    return;
+  }
+  const btn = document.getElementById('btn-export');
+  btn.disabled = true;
+  setStatus('生成中...');
+  try {
+    const res = await fetch('/api/invoices/export?ids=' + encodeURIComponent(IDS), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ form }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setStatus(data.error || '导出失败', 'text-danger');
+      alert(data.error || '导出失败');
+      return;
+    }
+    setStatus('已生成：' + data.filename + '（' + data.customs_weight + 'KGS / $' +
+      Number(data.total_amount).toLocaleString() + '）', 'text-success');
+    window.location.href = data.download;
+  } catch (err) {
+    setStatus('导出异常: ' + err, 'text-danger');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function downloadPreview() {
+  window.open('/api/invoices/preview.xlsx?ids=' + encodeURIComponent(IDS), '_blank');
+}
+
+loadSnapshot();
+</script>
+{% endblock %}

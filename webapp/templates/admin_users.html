@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}账号管理 - 報關發票數字化管理平台{% endblock %}
+{% block content %}
+
+{% if flash %}
+<div class="alert alert-{{ flash.level }} alert-dismissible py-2">
+  {{ flash.message }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-warning py-2">{{ error }}</div>
+{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-header py-2 fw-semibold">新建账号</div>
+  <div class="card-body">
+    <form class="row g-2 align-items-end" method="post" action="/admin/users">
+      <div class="col-12 col-md-2">
+        <label class="form-label small mb-1">账号</label>
+        <input class="form-control form-control-sm" name="username" required>
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label small mb-1">初始密码</label>
+        <input class="form-control form-control-sm" name="password" required minlength="4">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label small mb-1">姓名</label>
+        <input class="form-control form-control-sm" name="display_name">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label small mb-1">部门 / 地区</label>
+        <input class="form-control form-control-sm" name="dept">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label small mb-1">角色</label>
+        <select class="form-select form-select-sm" name="role">
+          {% for r, label in role_labels.items() %}
+          <option value="{{ r }}" {% if r == 'type2' %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">创建</button>
+      </div>
+    </form>
+    <div class="small text-muted mt-2">
+      第一类：发票列表 + Excel 编辑 + 导出；第二类：仅查看每张发票的明细；管理员：全部权限。
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-body p-0">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>ID</th><th>账号</th><th>姓名</th><th>部门</th><th>角色</th>
+          <th>状态</th><th>创建时间</th><th class="text-end">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="{% if not r.is_active %}table-secondary{% endif %}">
+          <td>{{ r.id }}</td>
+          <td class="fw-semibold">{{ r.username }}</td>
+          <td>{{ r.display_name }}</td>
+          <td>{{ r.dept or '-' }}</td>
+          <td>
+            <form method="post" action="/admin/users/{{ r.id }}/role" class="d-flex gap-1">
+              <select class="form-select form-select-sm" name="role" style="width:auto">
+                {% for rl, label in role_labels.items() %}
+                <option value="{{ rl }}" {% if r.role == rl %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <button class="btn btn-sm btn-outline-secondary py-0">改</button>
+            </form>
+          </td>
+          <td>
+            {% if r.is_active %}<span class="badge text-bg-success">启用</span>
+            {% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}
+          </td>
+          <td class="small text-muted">{{ r.created_at.strftime('%Y-%m-%d') }}</td>
+          <td class="text-end">
+            <form method="post" action="/admin/users/{{ r.id }}/password" class="d-inline-flex gap-1">
+              <input class="form-control form-control-sm" style="width:120px" name="password"
+                     placeholder="新密码" minlength="4" required>
+              <button class="btn btn-sm btn-outline-primary py-0">重置密码</button>
+            </form>
+            {% if r.id != user.id %}
+            <form method="post" action="/admin/users/{{ r.id }}/toggle" class="d-inline">
+              <button class="btn btn-sm {% if r.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %} py-0">
+                {% if r.is_active %}停用{% else %}启用{% endif %}
+              </button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

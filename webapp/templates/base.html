@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}報關發票(柬埔寨)數字化管理平台{% endblock %}</title>
+  <link rel="stylesheet" href="/static/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary no-print">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-semibold" href="/">報關發票(柬埔寨)數字化管理平台</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="nav">
+      <ul class="navbar-nav me-auto">
+        {% if user and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
+        <li class="nav-item"><a class="nav-link {% if request.url.path.startswith('/invoices') %}active{% endif %}"
+             href="/invoices">发票列表</a></li>
+        {% endif %}
+        {% if user and user.role in [ROLE_TYPE2, ROLE_ADMIN] %}
+        <li class="nav-item"><a class="nav-link {% if request.url.path.startswith('/details') %}active{% endif %}"
+             href="/details">发票明细</a></li>
+        {% endif %}
+        {% if user and user.role == ROLE_ADMIN %}
+        <li class="nav-item"><a class="nav-link {% if request.url.path == '/admin' %}active{% endif %}"
+             href="/admin">管理后台</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.url.path.startswith('/admin/users') %}active{% endif %}"
+             href="/admin/users">账号管理</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.url.path.startswith('/admin/upload') %}active{% endif %}"
+             href="/admin/upload">数据导入</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.url.path.startswith('/admin/exports') %}active{% endif %}"
+             href="/admin/exports">导出历史</a></li>
+        {% endif %}
+      </ul>
+      <span class="navbar-text me-3">
+        {% if user %}
+          {{ user.display_name or user.username }}
+          <span class="badge text-bg-light ms-1">{{ ROLE_LABELS.get(user.role, user.role) }}</span>
+        {% endif %}
+      </span>
+      {% if user %}
+      <a class="btn btn-sm btn-outline-light" href="/logout">退出</a>
+      {% else %}
+      <a class="btn btn-sm btn-outline-light" href="/login">登录</a>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+
+<main class="container-fluid py-3">
+  {% block content %}{% endblock %}
+</main>
+
+<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

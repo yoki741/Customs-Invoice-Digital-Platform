@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}数据导入 - 報關發票數字化管理平台{% endblock %}
+{% block content %}
+
+{% if flash %}
+<div class="alert alert-{{ flash.level }} alert-dismissible py-2">
+  {{ flash.message }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-header py-2 fw-semibold">上传源数据 .xlsm（InputTable）</div>
+  <div class="card-body">
+    <form method="post" action="/admin/upload" enctype="multipart/form-data" id="upload-form">
+      <div class="mb-3">
+        <input class="form-control" type="file" name="files" multiple accept=".xlsm,.xlsx"
+               id="file-input" required>
+      </div>
+      <button class="btn btn-primary" id="btn-upload">导入</button>
+      <span class="text-muted small ms-2">同 Invoice No. 会覆盖已有记录；文件保存在 data/uploads/</span>
+    </form>
+  </div>
+</div>
+
+{% if results is not none %}
+<div class="card shadow-sm mt-3">
+  <div class="card-header py-2 fw-semibold">导入结果</div>
+  <div class="card-body p-0">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr>
+        <th>文件</th><th>Invoice No.</th><th>结果</th><th>说明</th>
+      </tr></thead>
+      <tbody>
+        {% for r in results %}
+        <tr class="{% if r.ok %}table-success{% else %}table-danger{% endif %}">
+          <td>{{ r.file }}</td>
+          <td>{{ r.get('invoice_no', '-') }}</td>
+          <td>{% if r.ok %}成功{% else %}失败{% endif %}</td>
+          <td class="small">{{ r.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('upload-form').addEventListener('submit', () => {
+  const btn = document.getElementById('btn-upload');
+  btn.disabled = true;
+  btn.textContent = '导入中...';
+});
+</script>
+{% endblock %}

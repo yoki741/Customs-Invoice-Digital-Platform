@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}发票列表 - 報關發票數字化管理平台{% endblock %}
+{% block content %}
+
+{% if flash %}
+<div class="alert alert-{{ flash.level }} alert-dismissible py-2">
+  {{ flash.message }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="card shadow-sm no-print">
+  <div class="card-body py-2">
+    <form class="row g-2 align-items-end" method="get" action="/invoices">
+      <div class="col-12 col-md-4">
+        <label class="form-label small mb-1">搜索</label>
+        <input class="form-control form-control-sm" name="q" value="{{ q }}"
+               placeholder="发票号 / 收货方 / 供应商 / 文件名">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-1">运输方式</label>
+        <select class="form-select form-select-sm" name="transport">
+          <option value="">全部</option>
+          {% for t in ['海运', '空运', '陆运'] %}
+          <option value="{{ t }}" {% if transport == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small mb-1">公司</label>
+        <select class="form-select form-select-sm" name="company">
+          <option value="">全部</option>
+          {% for c in ['Vanco', 'Eastex'] %}
+          <option value="{{ c }}" {% if company == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">筛选</button>
+      </div>
+      <div class="col-auto ms-auto">
+        <span class="text-muted small me-2">共 {{ total }} 条</span>
+        <button type="button" class="btn btn-success btn-sm" id="btn-merge"
+                onclick="openSelected()">合并编辑 / 导出</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:34px"><input type="checkbox" class="form-check-input" id="check-all"
+                 onclick="toggleAll(this)"></th>
+            <th>Invoice No.</th>
+            <th>日期</th>
+            <th>Ship Mode</th>
+            <th>运输</th>
+            <th>公司</th>
+            <th>Delivery to</th>
+            <th>供应商</th>
+            <th class="text-end">件数</th>
+            <th class="text-end">净重</th>
+            <th class="text-end">毛重</th>
+            <th>明细</th>
+            <th>源文件</th>
+            <th>导入时间</th>
+            <th class="text-end">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td><input type="checkbox" class="form-check-input row-check" value="{{ r.id }}"></td>
+            <td class="fw-semibold">{{ r.invoice_no or '-' }}</td>
+            <td>{{ r.invoice_date or '-' }}</td>
+            <td>{{ r.ship_mode or '-' }}</td>
+            <td>{{ r.transport or '-' }}</td>
+            <td>{{ r.company or '-' }}</td>
+            <td class="small">{{ r.delivery_to or '-' }}</td>
+            <td>{{ r.supplier_code or '-' }}</td>
+            <td class="text-end">{{ '%g' % r.rolls if r.rolls else '-' }}</td>
+            <td class="text-end">{{ '%.2f' % r.net_weight if r.net_weight else '-' }}</td>
+            <td class="text-end">{{ '%.2f' % r.gross_weight if r.gross_weight else '-' }}</td>
+            <td class="text-end">{{ r.item_count }}</td>
+            <td class="small text-muted">{{ r.source_filename }}</td>
+            <td class="small text-muted">{{ r.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary py-0"
+                 href="/invoices/edit?ids={{ r.id }}">编辑 / 导出</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="15" class="text-center text-muted py-4">
+            暂无数据。请管理员在「数据导入」上传 .xlsm 源文件。
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if pages > 1 %}
+  <div class="card-footer d-flex justify-content-between align-items-center">
+    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <div>
+      {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company %}
+      {% if page > 1 %}
+      <a class="btn btn-sm btn-outline-secondary"
+         href="/invoices?{{ qs }}&page={{ page - 1 }}">上一页</a>
+      {% endif %}
+      {% if page < pages %}
+      <a class="btn btn-sm btn-outline-secondary"
+         href="/invoices?{{ qs }}&page={{ page + 1 }}">下一页</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleAll(box) {
+  document.querySelectorAll('.row-check').forEach(c => { c.checked = box.checked; });
+}
+function openSelected() {
+  const ids = [...document.querySelectorAll('.row-check:checked')].map(c => c.value);
+  if (!ids.length) { alert('请先勾选要编辑的发票（可多选合并导出）'); return; }
+  window.location.href = '/invoices/edit?ids=' + ids.join(',');
+}
+</script>
+{% endblock %}

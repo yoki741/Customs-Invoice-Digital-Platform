@@ -21,3 +21,17 @@ __pycache__/
 build/
 dist/
 *.spec
+
+# Web 平台运行数据（数据库 / 上传源文件 / 导出结果 / 日志）
+data/
+logs/
+
+# 前端构建依赖
+webapp/static_src/node_modules/
+webapp/static/vendor/univer.js
+webapp/static/vendor/univer.css
+webapp/static/vendor/assets/
+
+# 虚拟环境
+.venv/
+venv/

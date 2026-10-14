@@ -1,0 +1,1 @@
+{"name":"invoice-platform-frontend","private":true,"version":"1.0.0","scripts":{"build":"node build.mjs"},"dependencies":{"@univerjs/preset-sheets-core":"^1.0.4","@univerjs/presets":"^1.0.4","bootstrap":"^5.3.8","esbuild":"^0.28.2","puppeteer-core":"^24.43.1"}}
