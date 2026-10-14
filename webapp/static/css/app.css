@@ -92,7 +92,7 @@ a:hover { text-decoration: underline; }
   border-radius: 8px; width: 34px; height: 34px; cursor: pointer; font-size: 16px;
 }
 
-.content { padding: 22px 24px 40px; max-width: 1500px; }
+.content { padding: 22px 24px 40px; }
 
 /* ---------- 卡片 ---------- */
 .card {

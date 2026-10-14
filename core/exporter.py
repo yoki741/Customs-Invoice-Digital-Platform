@@ -268,10 +268,6 @@ class Exporter:
             BuildResult，workbook 未保存。
         """
         fields = manual if isinstance(manual, ManualFields) else ManualFields.from_dict(manual)
-        result = BuildResult(workbook=Workbook())
-        wb_out = result.workbook
-        del wb_out[wb_out.sheetnames[0]]
-
         first = group_data[0]
         delivery_to = first.delivery_to or ""
         ship_mode = first.ship_mode or ""
@@ -282,7 +278,6 @@ class Exporter:
             company_for_price, suffix = "Vanco", "-CT"
         else:
             company_for_price, suffix = "Eastex", ""
-        result.company = company_for_price
 
         if "Air" in ship_mode:
             transport_suffix = "AIR"
@@ -292,21 +287,28 @@ class Exporter:
             transport_suffix = "SEA"
 
         transport = get_transport_type(ship_mode, first.file_name) or "海运"
-        result.transport = transport
 
         supplier = (fields.supplier or "UNKNOWN").strip()
         bill_no = fields.bill_no.strip()
-        result.bill_no = bill_no
-        result.file_stem = f"{supplier} INV#{bill_no}{suffix}({transport_suffix})"
+        file_stem = f"{supplier} INV#{bill_no}{suffix}({transport_suffix})"
 
         template_file = self.template_dir / self.transport_map.get(transport, "")
         if not template_file.exists():
+            result = BuildResult(workbook=Workbook())
             result.ok = False
+            result.company = company_for_price
+            result.transport = transport
+            result.bill_no = bill_no
+            result.file_stem = file_stem
             result.messages.append(f"模板文件不存在: {template_file.name}")
             return result
 
         wb_out = openpyxl.load_workbook(str(template_file))
-        result.workbook = wb_out
+        result = BuildResult(workbook=wb_out)
+        result.company = company_for_price
+        result.transport = transport
+        result.bill_no = bill_no
+        result.file_stem = file_stem
         ws_inv1 = wb_out["INV1"]
         self._write_header(ws_inv1, first.header)
 
@@ -325,19 +327,24 @@ class Exporter:
         result.container_row = container_row
 
         # ---- 人工字段：Date / Invoice No / Ship mode ----
-        ws_inv1["J9"] = fields.date or None
-        ws_inv1["J10"] = fields.bill_no or None
+        # 只在有值时写入，与 EXE 一致：无 manual_data 时保留模板回退值
+        if fields.date:
+            ws_inv1["J9"] = fields.date
         if fields.bill_no:
+            ws_inv1["J10"] = fields.bill_no
             ws_inv1["J10"].alignment = Alignment(horizontal="left", vertical="top")
-        ws_inv1["B17"] = fields.ship_mode or None
+        if fields.ship_mode:
+            ws_inv1["B17"] = fields.ship_mode
 
         # 起运地（三种运输都写 A18，保留模板标签）
-        prefix, _ = _split_label(ws_inv1["A18"].value)
-        ws_inv1["A18"] = f"{prefix}{fields.place_receipt}"
+        if fields.place_receipt:
+            prefix, _ = _split_label(ws_inv1["A18"].value)
+            ws_inv1["A18"] = f"{prefix}{fields.place_receipt}"
 
-        # 陆运：装货港写 A19
+        # 陆运：装货港写 A19；清掉模板残留的空格
         if transport == "陆运":
-            ws_inv1["A19"] = f"Port of loading: {fields.port_loading}"
+            if fields.port_loading:
+                ws_inv1["A19"] = f"Port of loading: {fields.port_loading}"
             if ws_inv1["F10"].value == " ":
                 ws_inv1["F10"] = None
 
@@ -364,6 +371,7 @@ class Exporter:
         if not all_po:
             result.ok = False
             result.messages.append("无面料数据")
+            wb_out.close()
             return result
 
         net_weight_sum = sum(po["net_weight"] for po in all_po)

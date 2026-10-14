@@ -231,7 +231,11 @@ async def download(
 
     base = OUTPUT_DIR.resolve()
     target = (base / folder / name).resolve()
-    if not str(target).startswith(str(base)) or not target.exists():
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "非法路径"}, status_code=400)
+    if not target.is_file():
         return JSONResponse({"ok": False, "error": "文件不存在"}, status_code=404)
     return FileResponse(
         target,

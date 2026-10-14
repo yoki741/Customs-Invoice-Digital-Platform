@@ -59,7 +59,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    invoice_no: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    invoice_no: Mapped[Optional[str]] = mapped_column(String(64), index=True, unique=True)
     invoice_date: Mapped[Optional[str]] = mapped_column(String(32))
     bill_to: Mapped[Optional[str]] = mapped_column(String(255))
     delivery_to: Mapped[str] = mapped_column(String(255), default="", index=True)

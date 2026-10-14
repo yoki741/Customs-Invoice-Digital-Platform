@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -23,9 +24,15 @@ HOME_BY_ROLE = {
 
 
 def _safe_next(url: Optional[str]) -> str:
-    if url and url.startswith("/") and not url.startswith("//"):
-        return url
-    return "/"
+    """只允许站内相对路径，挡 //、/\\、/%2f%2f 等协议相对重定向。"""
+    if not url:
+        return "/"
+    decoded = unquote(url)
+    if not decoded.startswith("/"):
+        return "/"
+    if decoded.startswith("//") or decoded.startswith("/\\"):
+        return "/"
+    return decoded
 
 
 def _home_for(user: User) -> str:

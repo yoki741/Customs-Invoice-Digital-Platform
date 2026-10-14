@@ -18,6 +18,13 @@ from webapp.main import app  # noqa: E402
 SAMPLE = ROOT / "柬埔寨清关例子" / "VCO_202609_FB675_D202609007.xlsm"
 
 
+def _csrf_from(html: str) -> str:
+    import re
+    m = re.search(r'name="csrf"\s+value="([^"]+)"', html)
+    assert m, "未找到 CSRF token"
+    return m.group(1)
+
+
 def main() -> None:
     client = TestClient(app, base_url="http://testserver", follow_redirects=False)
 
@@ -32,9 +39,14 @@ def main() -> None:
     assert r.status_code == 303, (r.status_code, r.text[:200])
     print("[OK] 登录 ->", r.headers["location"])
 
+    r = client.get("/admin/upload")
+    assert r.status_code == 200, r.status_code
+    csrf = _csrf_from(r.text)
+
     with SAMPLE.open("rb") as fh:
         r = client.post(
             "/admin/upload",
+            data={"csrf": csrf},
             files=[("files", (SAMPLE.name, fh, "application/octet-stream"))],
         )
     assert r.status_code == 200, (r.status_code, r.text[:500])

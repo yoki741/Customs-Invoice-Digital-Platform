@@ -6,8 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Optional
 
+import secrets
+
 import bcrypt
-from fastapi import Depends, Request
+from fastapi import Depends, Form, HTTPException, Request
 from loguru import logger
 from sqlalchemy.orm import Session
 
@@ -45,6 +47,25 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
     except (ValueError, TypeError):
         return False
+
+
+# ---- CSRF ----
+
+
+def ensure_csrf(request: Request) -> str:
+    """确保会话里有 CSRF token，返回它（模板/表单注入用）。"""
+    token = request.session.get("csrf")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        request.session["csrf"] = token
+    return token
+
+
+def require_csrf(request: Request, csrf: str = Form("")) -> None:
+    """FastAPI 依赖：校验 POST 表单里的 csrf 字段。"""
+    expected = request.session.get("csrf")
+    if not expected or not csrf or not secrets.compare_digest(expected, csrf):
+        raise HTTPException(status_code=403, detail="CSRF token 无效，请刷新页面重试")
 
 
 # ---- 日志 ----

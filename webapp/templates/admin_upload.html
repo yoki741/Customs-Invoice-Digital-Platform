@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}数据导入 - 報關發票數字化管理平台{% endblock %}
+{% block title %}数据导入 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
 {% block heading %}数据导入{% endblock %}
 {% block crumb %}上传源数据 .xlsm{% endblock %}
 {% block content %}
@@ -15,6 +15,7 @@
   <div class="card-header">上传源数据 .xlsm（InputTable）</div>
   <div class="card-body">
     <form method="post" action="/admin/upload" enctype="multipart/form-data" id="upload-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <div class="mb-3">
         <input class="form-control" type="file" name="files" multiple accept=".xlsm,.xlsx" id="file-input" required>
         <div class="small text-muted mt-1">支持多选；同 Invoice No. 会覆盖已有记录，文件保存在 data/uploads/</div>

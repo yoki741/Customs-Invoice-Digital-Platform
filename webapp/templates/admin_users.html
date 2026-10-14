@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}账号管理 - 報關發票數字化管理平台{% endblock %}
+{% block title %}账号管理 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
 {% block heading %}账号管理{% endblock %}
 {% block crumb %}共 {{ rows|length }} 个账号{% endblock %}
 {% block content %}
@@ -18,6 +18,7 @@
   <div class="card-header">新建账号</div>
   <div class="card-body">
     <form class="row g-2 align-items-end" method="post" action="/admin/users">
+      <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <div class="col-12 col-md-2">
         <label class="form-label">账号</label>
         <input class="form-control form-control-sm" name="username" required>
@@ -71,6 +72,7 @@
             <td>{{ r.dept or '-' }}</td>
             <td>
               <form method="post" action="/admin/users/{{ r.id }}/role" class="d-flex gap-1">
+                <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <select class="form-select form-select-sm" name="role" style="width:auto">
                   {% for rl, label in role_labels.items() %}
                   <option value="{{ rl }}" {% if r.role == rl %}selected{% endif %}>{{ label }}</option>
@@ -86,11 +88,13 @@
             <td class="small text-muted">{{ r.created_at.strftime('%Y-%m-%d') }}</td>
             <td class="text-end">
               <form method="post" action="/admin/users/{{ r.id }}/password" class="d-inline-flex gap-1">
+                <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <input class="form-control form-control-sm" style="width:110px" name="password" placeholder="新密码" minlength="4" required>
                 <button class="btn btn-sm btn-outline-primary py-0">重置密码</button>
               </form>
               {% if r.id != user.id %}
               <form method="post" action="/admin/users/{{ r.id }}/toggle" class="d-inline">
+                <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <button class="btn btn-sm {% if r.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %} py-0">
                   {% if r.is_active %}停用{% else %}启用{% endif %}
                 </button>

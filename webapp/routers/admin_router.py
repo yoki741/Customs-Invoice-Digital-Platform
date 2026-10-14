@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from ..auth import ROLE_ALL, audit, hash_password, require_admin
+from ..auth import ROLE_ALL, audit, hash_password, require_admin, require_csrf
 from ..importer import import_source_file, save_upload
 from ..models import ROLE_LABELS, ExportJob, Invoice, User, get_db
 from ..templates_setup import templates
@@ -70,6 +70,7 @@ async def user_list(
 @router.post("/users")
 async def user_create(
     request: Request,
+    csrf: str = Form(""),
     username: str = Form(...),
     password: str = Form(...),
     role: str = Form(...),
@@ -78,6 +79,7 @@ async def user_create(
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
+    require_csrf(request, csrf)
     name = username.strip()
     if not name or len(password) < 4:
         _flash(request, "warning", "用户名不能为空，密码至少 4 位")
@@ -106,11 +108,14 @@ async def user_create(
 
 @router.post("/users/{user_id}/role")
 async def user_role(
+    request: Request,
     user_id: int,
     role: str = Form(...),
+    csrf: str = Form(""),
     current: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
+    require_csrf(request, csrf)
     target = db.get(User, user_id)
     if target and role in ROLE_ALL:
         old = target.role
@@ -122,10 +127,13 @@ async def user_role(
 
 @router.post("/users/{user_id}/toggle")
 async def user_toggle(
+    request: Request,
     user_id: int,
+    csrf: str = Form(""),
     current: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
+    require_csrf(request, csrf)
     target = db.get(User, user_id)
     if target and target.id != current.id:
         target.is_active = not target.is_active
@@ -139,10 +147,12 @@ async def user_toggle(
 async def user_password(
     request: Request,
     user_id: int,
+    csrf: str = Form(""),
     password: str = Form(...),
     current: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
+    require_csrf(request, csrf)
     target = db.get(User, user_id)
     if target and len(password) >= 4:
         target.password_hash = hash_password(password)
@@ -173,10 +183,12 @@ async def upload_page(
 @router.post("/upload")
 async def upload_files(
     request: Request,
+    csrf: str = Form(""),
     files: list[UploadFile] = File(default=[]),
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
+    require_csrf(request, csrf)
     results: list[dict] = []
     for upload in files:
         if not upload.filename:
@@ -227,7 +239,17 @@ async def export_history(
         .limit(size)
         .all()
     )
-    invoice_map = {i.id: i.invoice_no for i in db.query(Invoice).all()}
+    all_ids: set[int] = set()
+    for row in rows:
+        try:
+            all_ids.update(int(i) for i in json.loads(row.invoice_ids))
+        except Exception:
+            pass
+    invoice_map = (
+        {i.id: i.invoice_no for i in db.query(Invoice).filter(Invoice.id.in_(all_ids))}
+        if all_ids
+        else {}
+    )
     for row in rows:
         try:
             ids = json.loads(row.invoice_ids)

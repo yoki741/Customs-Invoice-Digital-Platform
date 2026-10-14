@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.config import UPLOAD_DIR, ensure_dirs
@@ -98,7 +99,11 @@ def import_source_file(
             )
         )
     db.add(invoice)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError(f"Invoice No. {data.invoice_no} 已存在（并发冲突）") from exc
     db.refresh(invoice)
     logger.info(
         "导入 {} -> invoice_no={} 明细{}条 ({})",

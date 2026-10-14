@@ -79,10 +79,13 @@ async def favicon() -> Response:
     return Response(status_code=204)
 
 
+_RESERVED_PREFIXES = ("api", "static", "admin", "invoices", "details", "login", "logout")
+
+
 @app.get("/{path:path}")
 async def page_not_found(request: Request, path: str) -> Response:
-    if path.startswith(("api/", "static/", "admin/", "invoices", "details", "login",
-                        "logout")):
+    first_segment = path.split("/", 1)[0]
+    if first_segment in _RESERVED_PREFIXES:
         return Response(status_code=404)
     return templates.TemplateResponse(
         request,
