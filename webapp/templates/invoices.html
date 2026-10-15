@@ -42,6 +42,7 @@
       </div>
       <div class="col-auto ms-auto">
         <button type="button" class="btn btn-success btn-sm" onclick="openSelected()">合并编辑 / 导出</button>
+        <div class="form-text mt-0">仅支持合并同一 Delivery to 的发票</div>
       </div>
     </form>
   </div>
@@ -73,7 +74,8 @@
         <tbody>
           {% for r in rows %}
           <tr>
-            <td><input type="checkbox" class="form-check-input row-check" value="{{ r.id }}"></td>
+            <td><input type="checkbox" class="form-check-input row-check" value="{{ r.id }}"
+                      data-delivery="{{ r.delivery_to or '' }}"></td>
             <td class="fw-semibold">{{ r.invoice_no or '-' }}</td>
             <td>{{ r.invoice_date or '-' }}</td>
             <td>{{ r.ship_mode or '-' }}</td>
@@ -123,9 +125,21 @@ function toggleAll(box) {
   document.querySelectorAll('.row-check').forEach(c => { c.checked = box.checked; });
 }
 function openSelected() {
-  const ids = [...document.querySelectorAll('.row-check:checked')].map(c => c.value);
-  if (!ids.length) { alert('请先勾选要编辑的发票（可多选合并导出）'); return; }
-  window.location.href = '/invoices/edit?ids=' + ids.join(',');
+  const boxes = [...document.querySelectorAll('.row-check:checked')];
+  if (!boxes.length) { alert('请先勾选要编辑的发票（可多选合并导出）'); return; }
+  const groups = {};
+  boxes.forEach(c => {
+    const key = (c.dataset.delivery || '').trim() || '(未填写)';
+    (groups[key] = groups[key] || []).push(c.value);
+  });
+  const names = Object.keys(groups);
+  if (names.length > 1) {
+    const detail = names.map(n => `${n}：${groups[n].length} 张`).join('\n');
+    alert('只能合并同一 Delivery to 的发票，当前选中涉及：\n\n' + detail +
+          '\n\n请只勾选 Delivery to 相同的发票后再试。');
+    return;
+  }
+  window.location.href = '/invoices/edit?ids=' + boxes.map(c => c.value).join(',');
 }
 </script>
 {% endblock %}

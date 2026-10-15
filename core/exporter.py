@@ -251,6 +251,16 @@ class Exporter:
             ws["A2"].font = font2
             ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
 
+        ws["A3"] = ""
+        ws["A4"] = ""
+        if ws["A3"].hyperlink:
+            ws["A3"].hyperlink = None
+        if ws["A4"].hyperlink:
+            ws["A4"].hyperlink = None
+
+        ws.merge_cells("A1:J1")
+        ws.merge_cells("A2:J2")
+
     # ---- 主流程 ----
 
     def build(
