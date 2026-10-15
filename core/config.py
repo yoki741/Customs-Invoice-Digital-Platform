@@ -22,6 +22,8 @@ LOG_DIR = BASE_DIR / "logs"
 
 DB_PATH = DATA_DIR / "app.db"
 SECRET_KEY_PATH = DATA_DIR / "secret_key"
+# Header 认证共享密钥（nginx proxy_set_header X-Internal-Token 与此一致）
+HEADER_AUTH_SECRET_PATH = DATA_DIR / "header_auth_secret"
 
 TRANSPORT_TEMPLATES = {
     "海运": "海运模板.xlsx",

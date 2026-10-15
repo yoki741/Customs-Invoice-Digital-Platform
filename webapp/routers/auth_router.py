@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import (
     audit,
+    get_user,
     hash_password,
     require_csrf,
     require_user,
@@ -46,8 +47,13 @@ def _home_for(user: User) -> str:
 
 
 @router.get("/login")
-async def login_page(request: Request, next: str = "") -> object:
-    if request.session.get("uid"):
+async def login_page(
+    request: Request,
+    next: str = "",
+    user: Optional[User] = Depends(get_user),
+) -> object:
+    # 已通过 Header 透传或会话登录的用户直接进首页
+    if user is not None:
         return RedirectResponse("/", status_code=303)
     return templates.TemplateResponse(
         request,
@@ -90,14 +96,7 @@ async def logout(request: Request, db: Session = Depends(get_db)) -> object:
 
 
 @router.get("/")
-async def home(request: Request, db: Session = Depends(get_db)) -> object:
-    uid = request.session.get("uid")
-    if not uid:
-        return RedirectResponse("/login", status_code=303)
-    user = db.get(User, uid)
-    if user is None or not user.is_active:
-        request.session.clear()
-        return RedirectResponse("/login", status_code=303)
+async def home(user: User = Depends(require_user)) -> object:
     return RedirectResponse(_home_for(user), status_code=303)
 
 

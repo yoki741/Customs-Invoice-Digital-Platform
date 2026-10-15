@@ -160,10 +160,14 @@ seed_admin()
 async def _startup() -> None:
     logger.info("平台启动：{}", BASE_DIR)
     try:
+        from .auth import get_header_auth_secret
         from .models import backup_db
 
+        # 打印密钥指纹（前6位），便于运维核对 nginx 配置，不泄露全量
+        secret = get_header_auth_secret()
+        logger.info("Header 认证已启用，共享密钥指纹: {}…（nginx X-Internal-Token 需一致）", secret[:6])
         dest = backup_db()
         if dest:
             logger.info("已备份数据库：{}", dest)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("数据库备份失败：{}", exc)
+        logger.warning("启动附加任务失败：{}", exc)
