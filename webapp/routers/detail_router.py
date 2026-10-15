@@ -30,6 +30,7 @@ async def detail_list(
     request: Request,
     invoice_id: int = 0,
     q: str = "",
+    inv_q: str = "",
     check_status: str = "",
     page: int = 1,
     user: User = Depends(require_type2),
@@ -38,11 +39,20 @@ async def detail_list(
     inv_query = db.query(Invoice)
     if check_status in (CHECK_PENDING, CHECK_PASSED, CHECK_FAILED):
         inv_query = inv_query.filter(Invoice.check_status == check_status)
+    if inv_q.strip():
+        like = f"%{inv_q.strip()}%"
+        inv_query = inv_query.filter(
+            or_(Invoice.invoice_no.ilike(like), Invoice.delivery_to.ilike(like))
+        )
     invoices = (
         inv_query.order_by(Invoice.uploaded_at.desc(), Invoice.id.desc())
         .limit(500)
         .all()
     )
+
+    # 搜索发票号唯一命中时自动选中，免去再点一次下拉
+    if inv_q.strip() and not invoice_id and len(invoices) == 1:
+        invoice_id = invoices[0].id
 
     counts = {
         CHECK_PENDING: db.query(Invoice).filter(Invoice.check_status == CHECK_PENDING).count(),
@@ -96,6 +106,7 @@ async def detail_list(
             "rows": rows,
             "invoice_id": invoice_id,
             "q": q,
+            "inv_q": inv_q,
             "check_status": check_status,
             "counts": counts,
             "page": page,

@@ -15,6 +15,11 @@
   <div class="card-body py-2">
     <form class="row g-2 align-items-end" method="get" action="/details">
       <div class="col-12 col-md-3">
+        <label class="form-label">搜索发票（号 / 客户）</label>
+        <input class="form-control form-control-sm" name="inv_q" value="{{ inv_q }}"
+               placeholder="输入发票号或客户名，回车查询">
+      </div>
+      <div class="col-12 col-md-3">
         <label class="form-label">选择发票</label>
         <select class="form-select form-select-sm" name="invoice_id" onchange="this.form.submit()">
           <option value="0">全部发票（先选一张才能核对）</option>
@@ -24,8 +29,11 @@
           </option>
           {% endfor %}
         </select>
+        {% if inv_q and not invoices %}
+        <div class="form-text text-warning">没有匹配「{{ inv_q }}」的发票，请检查发票号或客户名</div>
+        {% endif %}
       </div>
-      <div class="col-12 col-md-3">
+      <div class="col-12 col-md-2">
         <label class="form-label">核对状态</label>
         <select class="form-select form-select-sm" name="check_status" onchange="this.form.submit()">
           <option value="">全部（{{ counts[CHECK_PENDING] + counts[CHECK_PASSED] + counts[CHECK_FAILED] }}）</option>
@@ -34,7 +42,7 @@
           <option value="{{ CHECK_PASSED }}" {% if check_status == CHECK_PASSED %}selected{% endif %}>核对通过（{{ counts[CHECK_PASSED] }}）</option>
         </select>
       </div>
-      <div class="col-12 col-md-4">
+      <div class="col-12 col-md-3">
         <label class="form-label">搜索明细</label>
         <input class="form-control form-control-sm" name="q" value="{{ q }}"
                placeholder="Description / Fabric Type / PO No. / Colour">
@@ -153,10 +161,10 @@
     <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
     <div>
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&check_status={{ check_status }}&page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&check_status={{ check_status }}&page={{ page - 1 }}">上一页</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&check_status={{ check_status }}&page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&check_status={{ check_status }}&page={{ page + 1 }}">下一页</a>
       {% endif %}
     </div>
   </div>

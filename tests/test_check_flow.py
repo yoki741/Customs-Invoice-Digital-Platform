@@ -82,6 +82,25 @@ def main() -> None:
         nos.add(re.sub(r"[^A-Za-z0-9\-]", "", re.sub(r"<[^>]+>", "", first_td)))
     nos.discard("")
     check(nos == {"26LF0845"}, f"按有问题筛选只显示问题发票的明细行 {sorted(nos)}")
+
+    # 手动输入搜索发票号：唯一命中自动选中（2609006 无相似号）
+    r = c.get("/details?inv_q=2609006")
+    check("Invoice No.:</span> <b>2609006</b>" in r.text, "搜索发票号唯一命中自动选中")
+    check('name="inv_q"' in r.text and 'value="2609006"' in r.text, "搜索框保留输入值")
+
+    # 模糊匹配多命中（26LF0845 匹配 26LF0845 和 26LF0845-1）：不自动选中
+    r = c.get("/details?inv_q=26LF0845")
+    check("26LF0845-1" in r.text and "26LF0845" in r.text, "模糊搜索多命中不自动选中")
+
+    # 客户名模糊搜索多命中：不自动选中，下拉只显示匹配项
+    r = c.get("/details?inv_q=EASTEX")
+    check('全部发票（先选一张才能核对）' in r.text, "多命中时不自动选中")
+    check("EASTEX GARMENT" in r.text and "DAKOTA" not in r.text.split("<select")[1].split("</select>")[0],
+          "下拉只含匹配客户的发票")
+
+    # 无匹配
+    r = c.get("/details?inv_q=NOTEXIST999")
+    check("没有匹配" in r.text, "无匹配时显示提示")
     c.close()
 
     # --- type1 视角 ---
