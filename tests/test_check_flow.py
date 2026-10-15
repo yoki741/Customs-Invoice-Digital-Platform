@@ -91,6 +91,10 @@ def main() -> None:
     check("有问题" in r.text, "列表显示有问题徽章")
     check("badge text-bg-danger" in r.text, "侧栏有问题角标")
     check("核对" in r.text, "列表有核对列")
+    check("data-check-status" in r.text and "data-invoice-no" in r.text,
+          "勾选框携带核对状态与发票号（供编辑/导出前拦截）")
+    check("已被核对标记为" in r.text or "openSelected" in r.text,
+          "openSelected 含拦截提示逻辑")
     r = c.get("/invoices?check_status=failed")
     check("数量与装箱单不一致" in r.text or "有问题" in r.text, "列表可按有问题筛选")
     r = c.get("/details", follow_redirects=False)

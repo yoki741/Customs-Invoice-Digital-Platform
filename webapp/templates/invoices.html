@@ -85,7 +85,9 @@
           {% for r in rows %}
           <tr>
             <td><input type="checkbox" class="form-check-input row-check" value="{{ r.id }}"
-                      data-delivery="{{ r.delivery_to or '' }}"></td>
+                      data-delivery="{{ r.delivery_to or '' }}"
+                      data-check-status="{{ r.check_status }}"
+                      data-invoice-no="{{ r.invoice_no or '-' }}"></td>
             <td class="fw-semibold">{{ r.invoice_no or '-' }}</td>
             <td>{{ r.invoice_date or '-' }}</td>
             <td>{{ r.ship_mode or '-' }}</td>
@@ -149,6 +151,11 @@ function openSelected() {
     alert('只能合并同一 Delivery to 的发票，当前选中涉及：\n\n' + detail +
           '\n\n请只勾选 Delivery to 相同的发票后再试。');
     return;
+  }
+  const failed = boxes.filter(c => c.dataset.checkStatus === '{{ CHECK_FAILED }}');
+  if (failed.length) {
+    const nos = failed.map(c => c.dataset.invoiceNo).join('、');
+    if (!confirm('以下发票已被核对标记为「有问题」，继续编辑 / 导出？\n\n' + nos)) return;
   }
   window.location.href = '/invoices/edit?ids=' + boxes.map(c => c.value).join(',');
 }
