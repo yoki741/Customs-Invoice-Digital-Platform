@@ -13,12 +13,21 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from jinja2 import pass_context
 from loguru import logger
 from starlette.middleware.sessions import SessionMiddleware
 
 from core.config import BASE_DIR, ensure_dirs
 from .auth import LoginRequired, PermissionDenied, get_secret_key, hash_password, setup_logging
-from .models import ROLE_ADMIN, User, SessionLocal, init_db
+from .models import (
+    CHECK_FAILED,
+    CHECK_PENDING,
+    ROLE_ADMIN,
+    Invoice,
+    User,
+    SessionLocal,
+    init_db,
+)
 from .routers import admin_router, auth_router, detail_router, invoice_router
 from .templates_setup import templates
 
@@ -42,6 +51,28 @@ app.include_router(auth_router.router)
 app.include_router(invoice_router.router)
 app.include_router(detail_router.router)
 app.include_router(admin_router.router)
+
+
+@pass_context
+def _sidebar_counts(ctx) -> dict:
+    """侧栏角标：有问题待处理数、待核对数。"""
+    request = ctx.get("request")
+    if request is None or request.session.get("uid") is None:
+        return {"issue_count": 0, "pending_count": 0}
+    db = SessionLocal()
+    try:
+        issue_count = (
+            db.query(Invoice).filter(Invoice.check_status == CHECK_FAILED).count()
+        )
+        pending_count = (
+            db.query(Invoice).filter(Invoice.check_status == CHECK_PENDING).count()
+        )
+        return {"issue_count": issue_count, "pending_count": pending_count}
+    finally:
+        db.close()
+
+
+templates.env.globals["sidebar_counts"] = _sidebar_counts
 
 
 # ---- 异常处理 ----

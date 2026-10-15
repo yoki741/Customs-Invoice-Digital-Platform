@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core.config import UPLOAD_DIR, ensure_dirs
 from core.price_table import get_company_name, get_transport_type
 from core.source_reader import SourceData, read_source_file
-from .models import Invoice, InvoiceItem, User
+from .models import CHECK_PENDING, Invoice, InvoiceItem, User
 
 
 def _safe_name(name: str) -> str:
@@ -113,6 +113,13 @@ def import_source_file(
 
     if existing and not replace:
         raise ValueError(f"Invoice No. {data.invoice_no} 已存在")
+
+    if existing is not None:
+        # 重新导入视为新版本：重置为待核对，强制第二类账号重新核对（闭环）
+        existing.check_status = CHECK_PENDING
+        existing.check_note = ""
+        existing.checked_by = None
+        existing.checked_at = None
 
     invoice = existing or Invoice()
     _fill_invoice(invoice, data, file_path, user)

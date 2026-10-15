@@ -38,6 +38,22 @@ ROLE_LABELS = {
 }
 
 
+# 核对状态（第二类账号核对，第一类账号修复）
+CHECK_PENDING = "pending"
+CHECK_PASSED = "passed"
+CHECK_FAILED = "failed"
+CHECK_LABELS = {
+    CHECK_PENDING: "待核对",
+    CHECK_PASSED: "核对通过",
+    CHECK_FAILED: "有问题",
+}
+CHECK_STYLES = {
+    CHECK_PENDING: "secondary",
+    CHECK_PASSED: "success",
+    CHECK_FAILED: "danger",
+}
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -91,6 +107,13 @@ class Invoice(Base):
     source_file: Mapped[str] = mapped_column(String(512))
     uploaded_by: Mapped[Optional[str]] = mapped_column(String(64))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    check_status: Mapped[str] = mapped_column(
+        String(16), default=CHECK_PENDING, index=True
+    )
+    check_note: Mapped[str] = mapped_column(Text, default="")
+    checked_by: Mapped[Optional[str]] = mapped_column(String(64))
+    checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     items: Mapped[list["InvoiceItem"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
@@ -159,6 +182,30 @@ SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 def init_db() -> None:
     """建表。"""
     Base.metadata.create_all(engine)
+    _migrate_check_fields()
+
+
+def _migrate_check_fields() -> None:
+    """为已有库补上核对字段（SQLite ALTER ADD COLUMN）。"""
+    with engine.begin() as conn:
+        existing = {
+            row[1]
+            for row in conn.exec_driver_sql("PRAGMA table_info(invoices)").fetchall()
+        }
+        cols = [
+            ("check_status", f"VARCHAR(16) DEFAULT '{CHECK_PENDING}'"),
+            ("check_note", "TEXT DEFAULT ''"),
+            ("checked_by", "VARCHAR(64)"),
+            ("checked_at", "TIMESTAMP"),
+        ]
+        for name, decl in cols:
+            if name not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE invoices ADD COLUMN {name} {decl}")
+        if existing and "check_status" in existing:
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_invoices_check_status "
+                "ON invoices (check_status)"
+            )
 
 
 def get_db():

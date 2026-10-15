@@ -11,6 +11,7 @@
 <body class="{% block body_class %}{% endblock %}">
 
 <aside class="sidebar" id="sidebar">
+  {% set sc = sidebar_counts() %}
   <div class="sidebar-brand">
     <div class="logo">報</div>
     <div class="title">
@@ -22,11 +23,15 @@
   <nav class="sidebar-nav">
     {% if user and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
     <a class="side-link {% if request.url.path.startswith('/invoices') %}active{% endif %}" href="/invoices">
-      <span class="ico">▤</span> 发票列表</a>
+      <span class="ico">▤</span> 发票列表
+      {% if sc.issue_count %}<span class="badge text-bg-danger ms-auto">{{ sc.issue_count }}</span>{% endif %}
+    </a>
     {% endif %}
     {% if user and user.role in [ROLE_TYPE2, ROLE_ADMIN] %}
     <a class="side-link {% if request.url.path.startswith('/details') %}active{% endif %}" href="/details">
-      <span class="ico">☰</span> 发票明细</a>
+      <span class="ico">☰</span> 发票明细
+      {% if sc.pending_count %}<span class="badge text-bg-secondary ms-auto">{{ sc.pending_count }}</span>{% endif %}
+    </a>
     {% endif %}
 
     {% if user and user.role == ROLE_ADMIN %}

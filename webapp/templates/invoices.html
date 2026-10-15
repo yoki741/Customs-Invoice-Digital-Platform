@@ -37,6 +37,15 @@
           {% endfor %}
         </select>
       </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">核对状态</label>
+        <select class="form-select form-select-sm" name="check_status">
+          <option value="">全部</option>
+          <option value="{{ CHECK_FAILED }}" {% if check_status == CHECK_FAILED %}selected{% endif %}>有问题（{{ counts[CHECK_FAILED] }}）</option>
+          <option value="{{ CHECK_PENDING }}" {% if check_status == CHECK_PENDING %}selected{% endif %}>待核对（{{ counts[CHECK_PENDING] }}）</option>
+          <option value="{{ CHECK_PASSED }}" {% if check_status == CHECK_PASSED %}selected{% endif %}>核对通过（{{ counts[CHECK_PASSED] }}）</option>
+        </select>
+      </div>
       <div class="col-auto">
         <button class="btn btn-primary btn-sm">筛选</button>
       </div>
@@ -62,6 +71,7 @@
             <th>公司</th>
             <th>Delivery to</th>
             <th>供应商</th>
+            <th>核对</th>
             <th class="num">件数</th>
             <th class="num">净重</th>
             <th class="num">毛重</th>
@@ -82,7 +92,8 @@
             <td>{% if r.transport %}<span class="badge badge-transport-{{ r.transport }}">{{ r.transport }}</span>{% else %}-{% endif %}</td>
             <td>{{ r.company or '-' }}</td>
             <td class="small">{{ r.delivery_to or '-' }}</td>
-            <td>{{ r.supplier_code or '-' }}</td>
+            <td class="small">{{ r.supplier_code or '-' }}</td>
+            <td><span class="badge text-bg-{{ CHECK_STYLES.get(r.check_status, 'secondary') }}" title="{{ r.check_note or '' }}">{{ CHECK_LABELS.get(r.check_status, r.check_status) }}</span></td>
             <td class="num">{{ '%g' % r.rolls if r.rolls else '-' }}</td>
             <td class="num">{{ '%.2f' % r.net_weight if r.net_weight else '-' }}</td>
             <td class="num">{{ '%.2f' % r.gross_weight if r.gross_weight else '-' }}</td>
@@ -94,7 +105,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="15" class="text-center text-muted py-4">
+          <tr><td colspan="16" class="text-center text-muted py-4">
             暂无数据。请管理员在「数据导入」上传 .xlsm 源文件。
           </td></tr>
           {% endfor %}
@@ -106,7 +117,7 @@
   <div class="card-footer d-flex justify-content-between align-items-center">
     <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
     <div>
-      {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company %}
+      {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company ~ '&check_status=' ~ check_status %}
       {% if page > 1 %}
       <a class="btn btn-sm btn-outline-secondary" href="/invoices?{{ qs }}&page={{ page - 1 }}">上一页</a>
       {% endif %}

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import warnings
 from pathlib import Path
@@ -50,6 +51,20 @@ def main() -> None:
             files=[("files", (SAMPLE.name, fh, "application/octet-stream"))],
         )
     assert r.status_code == 200, (r.status_code, r.text[:500])
+
+    # 已存在同号发票时走两段式确认：勾选覆盖后提交
+    if "覆盖" in r.text or "确认" in r.text:
+        csrf = _csrf_from(r.text)
+        r = client.post(
+            "/admin/upload",
+            data={"csrf": csrf, "confirm": "1",
+                  "pending_json": json.dumps([{
+                      "file": SAMPLE.name, "path": str(SAMPLE),
+                      "invoice_no": "D202609007", "overwrite": True,
+                  }])},
+        )
+        assert r.status_code == 200, (r.status_code, r.text[:500])
+
     assert "成功" in r.text, r.text[:500]
     print("[OK] 上传导入")
 

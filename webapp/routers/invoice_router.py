@@ -14,7 +14,14 @@ from sqlalchemy.orm import Session
 
 from ..auth import audit, require_type1
 from ..converters.field_map import EDITABLE_FIELDS, EXTRA_FIELDS
-from ..models import Invoice, User, get_db
+from ..models import (
+    CHECK_FAILED,
+    CHECK_PENDING,
+    CHECK_PASSED,
+    Invoice,
+    User,
+    get_db,
+)
 from ..service import (
     build_for_edit,
     build_snapshot,
@@ -54,6 +61,7 @@ async def invoice_list(
     q: str = "",
     transport: str = "",
     company: str = "",
+    check_status: str = "",
     page: int = 1,
     user: User = Depends(require_type1),
     db: Session = Depends(get_db),
@@ -74,6 +82,14 @@ async def invoice_list(
         query = query.filter(Invoice.transport == transport)
     if company:
         query = query.filter(Invoice.company == company)
+    if check_status in (CHECK_PENDING, CHECK_PASSED, CHECK_FAILED):
+        query = query.filter(Invoice.check_status == check_status)
+
+    counts = {
+        CHECK_PENDING: db.query(Invoice).filter(Invoice.check_status == CHECK_PENDING).count(),
+        CHECK_PASSED: db.query(Invoice).filter(Invoice.check_status == CHECK_PASSED).count(),
+        CHECK_FAILED: db.query(Invoice).filter(Invoice.check_status == CHECK_FAILED).count(),
+    }
 
     total = query.count()
     page = max(page, 1)
@@ -95,6 +111,8 @@ async def invoice_list(
             "q": q,
             "transport": transport,
             "company": company,
+            "check_status": check_status,
+            "counts": counts,
             "page": page,
             "pages": pages,
             "total": total,
