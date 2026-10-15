@@ -17,10 +17,10 @@
       <div class="col-12 col-md-3">
         <label class="form-label">选择发票</label>
         <select class="form-select form-select-sm" name="invoice_id" onchange="this.form.submit()">
-          <option value="0">全部发票</option>
+          <option value="0">全部发票（先选一张才能核对）</option>
           {% for i in invoices %}
           <option value="{{ i.id }}" {% if invoice_id == i.id %}selected{% endif %}>
-            {{ i.invoice_no }} · {{ i.delivery_to or '-' }} · {{ i.transport or '-' }}
+            [{{ CHECK_LABELS.get(i.check_status, i.check_status) }}] {{ i.invoice_no }} · {{ i.delivery_to or '-' }} · {{ i.transport or '-' }}
           </option>
           {% endfor %}
         </select>
@@ -45,6 +45,14 @@
     </form>
   </div>
 </div>
+
+{% if not current %}
+<div class="alert alert-info py-2 mt-3 d-flex align-items-center gap-2">
+  <span>从上方「选择发票」下拉选中一张发票后，即可在下方看到<b>核对状态</b>和
+  <span class="badge text-bg-success">核对通过</span> /
+  <span class="badge text-bg-danger">标记问题</span> 按钮。</span>
+</div>
+{% endif %}
 
 {% if current %}
 <div class="card mt-3">
