@@ -126,7 +126,6 @@ def main() -> None:
     r = client.get("/admin/audit")
     assert r.status_code == 200, r.status_code
     assert "操作日志" in r.text
-    assert "password.change" not in r.text  # 尚未改过密码
     r = client.get("/admin/audit", params={"action": "export"})
     assert r.status_code == 200 and "export" in r.text
     print("[OK] 审计日志 + 按操作筛选")

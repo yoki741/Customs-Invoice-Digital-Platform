@@ -15,17 +15,15 @@
     min-height: 520px;
     position: relative;
   }
-  .field-hint { font-size: .75rem; color: #6c757d; }
-  .required-star::after { content: " *"; color: #dc3545; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="d-flex align-items-center gap-2 mb-2 no-print">
   <a class="btn btn-sm btn-outline-secondary" href="/invoices">← 返回列表</a>
-  <span class="badge" style="background:#e8efff;color:#1e5eff">{{ first.ship_mode or '-' }}</span>
-  <span class="badge" style="background:#eef2ff;color:#4338ca">{{ first.delivery_to or '-' }}</span>
-  {% if invoices|length > 1 %}<span class="badge" style="background:#dcfce7;color:#15803d">合并 {{ invoices|length }} 张</span>{% endif %}
+  <span class="badge badge-info">{{ first.ship_mode or '-' }}</span>
+  <span class="badge badge-role">{{ first.delivery_to or '-' }}</span>
+  {% if invoices|length > 1 %}<span class="badge badge-ok">合并 {{ invoices|length }} 张</span>{% endif %}
 </div>
 
 <div class="row g-3">

@@ -82,8 +82,8 @@
               </form>
             </td>
             <td>
-              {% if r.is_active %}<span class="badge" style="background:#dcfce7;color:#15803d">启用</span>
-              {% else %}<span class="badge" style="background:#e5e7eb;color:#374151">停用</span>{% endif %}
+              {% if r.is_active %}<span class="badge badge-ok">启用</span>
+              {% else %}<span class="badge badge-off">停用</span>{% endif %}
             </td>
             <td class="small text-muted">{{ r.created_at.strftime('%Y-%m-%d') }}</td>
             <td class="text-end">

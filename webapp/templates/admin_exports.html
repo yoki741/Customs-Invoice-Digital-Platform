@@ -23,8 +23,8 @@
             <td class="num">{{ r.customs_weight or '-' }}</td>
             <td class="num">{{ '%.2f' % r.total_amount if r.total_amount else '-' }}</td>
             <td>
-              {% if r.success %}<span class="badge" style="background:#dcfce7;color:#15803d">成功</span>
-              {% else %}<span class="badge" style="background:#fdeaea;color:#b91c1c">失败</span>{% endif %}
+              {% if r.success %}<span class="badge badge-ok">成功</span>
+              {% else %}<span class="badge badge-bad">失败</span>{% endif %}
             </td>
             <td class="small text-muted" style="max-width:340px">
               <details>
