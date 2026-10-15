@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import (
@@ -186,6 +187,28 @@ def init_db() -> None:
     """建表。"""
     Base.metadata.create_all(engine)
     _migrate_check_fields()
+
+
+def backup_db(keep: int = 30) -> Optional[Path]:
+    """每日启动备份 app.db 到 data/backups/，保留最近 keep 份。
+
+    同一天只备份一次；返回本次备份路径，未备份（今日已有）返回 None。
+    """
+    import shutil
+    from datetime import datetime as _dt
+
+    backups = DB_PATH.parent / "backups"
+    backups.mkdir(parents=True, exist_ok=True)
+    today = _dt.now().strftime("%Y%m%d")
+    if any(backups.glob(f"app_{today}_*.db")):
+        return None
+    dest = backups / f"app_{today}_{_dt.now().strftime('%H%M%S')}.db"
+    shutil.copy2(DB_PATH, dest)
+    # 清理旧备份
+    old = sorted(backups.glob("app_*.db"))[:-keep]
+    for f in old:
+        f.unlink(missing_ok=True)
+    return dest
 
 
 def _migrate_check_fields() -> None:

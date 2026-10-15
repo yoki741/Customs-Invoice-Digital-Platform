@@ -159,3 +159,11 @@ seed_admin()
 @app.on_event("startup")
 async def _startup() -> None:
     logger.info("平台启动：{}", BASE_DIR)
+    try:
+        from .models import backup_db
+
+        dest = backup_db()
+        if dest:
+            logger.info("已备份数据库：{}", dest)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("数据库备份失败：{}", exc)
