@@ -122,6 +122,72 @@ def main() -> None:
     assert r.status_code == 200, r.status_code
     print("[OK] 账号管理")
 
+    # --- 审计日志 ---
+    r = client.get("/admin/audit")
+    assert r.status_code == 200, r.status_code
+    assert "操作日志" in r.text
+    assert "password.change" not in r.text  # 尚未改过密码
+    r = client.get("/admin/audit", params={"action": "export"})
+    assert r.status_code == 200 and "export" in r.text
+    print("[OK] 审计日志 + 按操作筛选")
+
+    # --- 自助改密码 ---
+    r = client.get("/change-password")
+    assert r.status_code == 200 and "修改我的密码" in r.text
+    csrf = _csrf_from(r.text)
+    r = client.post("/change-password", data={
+        "csrf": csrf, "old_password": "wrong", "new_password": "newpass123",
+        "confirm_password": "newpass123"}, follow_redirects=False)
+    assert r.status_code == 303, r.status_code
+    r = client.get("/change-password")
+    assert "原密码错误" in r.text
+    r = client.post("/change-password", data={
+        "csrf": _csrf_from(r.text), "old_password": "admin123",
+        "new_password": "admin123", "confirm_password": "admin123"},
+        follow_redirects=False)
+    r = client.get("/change-password")
+    assert "不能与原密码相同" in r.text
+    r = client.post("/change-password", data={
+        "csrf": _csrf_from(r.text), "old_password": "admin123",
+        "new_password": "admin456", "confirm_password": "admin456"},
+        follow_redirects=False)
+    assert r.status_code == 303
+    r = client.get("/change-password")
+    assert "密码已修改" in r.text
+    print("[OK] 自助改密码（错误/相同/成功）")
+
+    # 审计里应有改密码记录
+    r = client.get("/admin/audit", params={"action": "password.change"})
+    assert r.status_code == 200 and "修改了自己的密码" in r.text
+    print("[OK] 改密码已记入审计日志")
+
+    # 改回原密码
+    r = client.post("/change-password", data={
+        "csrf": _csrf_from(client.get("/change-password").text),
+        "old_password": "admin456", "new_password": "admin123",
+        "confirm_password": "admin123"}, follow_redirects=False)
+    assert r.status_code == 303
+
+    # --- 日期范围筛选 ---
+    r = client.get("/invoices", params={"date_from": "2099-01-01"})
+    assert r.status_code == 200 and "暂无数据" in r.text, r.text[:300]
+    r = client.get("/invoices", params={"date_from": "2000-01-01",
+                                        "date_to": "2099-12-31"})
+    assert "D202609007" in r.text
+    r = client.get("/invoices", params={"date_from": "bad-date"})
+    assert "D202609007" in r.text  # 非法日期忽略
+    print("[OK] 日期范围筛选（空/全含/非法忽略）")
+
+    # --- 问题说明可见性（先把发票标记为有问题） ---
+    r = client.get("/details?invoice_id=1")
+    csrf = _csrf_from(r.text)
+    client.post("/details/1/check", data={
+        "csrf": csrf, "status": "failed", "note": "冒烟测试问题说明"},
+        follow_redirects=False)
+    r = client.get("/invoices")
+    assert "冒烟测试问题说明" in r.text, "列表页应直接显示问题说明"
+    print("[OK] 列表页直接显示问题说明")
+
     print("\n全部冒烟测试通过")
 
 

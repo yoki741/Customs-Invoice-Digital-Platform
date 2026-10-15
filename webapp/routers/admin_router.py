@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ALL, audit, hash_password, require_admin, require_csrf
 from ..importer import import_source_file, save_upload, scan_uploads
-from ..models import ROLE_LABELS, ExportJob, Invoice, User, get_db
+from ..models import ROLE_LABELS, AuditLog, ExportJob, Invoice, User, get_db
 from ..templates_setup import templates
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -325,4 +325,55 @@ async def export_history(
         request,
         "admin_exports.html",
         {"user": user, "rows": rows, "page": page, "pages": pages, "total": total},
+    )
+
+
+# ---- 审计日志 ----
+
+
+@router.get("/audit")
+async def audit_log(
+    request: Request,
+    q: str = "",
+    action: str = "",
+    page: int = 1,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> object:
+    query = db.query(AuditLog)
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            AuditLog.username.ilike(like) | AuditLog.detail.ilike(like)
+        )
+    if action.strip():
+        query = query.filter(AuditLog.action == action.strip())
+
+    total = query.count()
+    page = max(page, 1)
+    size = 50
+    rows = (
+        query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
+    pages = max((total + size - 1) // size, 1)
+    actions = [
+        a
+        for (a,) in db.query(AuditLog.action).distinct().order_by(AuditLog.action)
+    ]
+    return templates.TemplateResponse(
+        request,
+        "admin_audit.html",
+        {
+            "user": user,
+            "rows": rows,
+            "q": q,
+            "action": action,
+            "actions": actions,
+            "page": page,
+            "pages": pages,
+            "total": total,
+        },
     )

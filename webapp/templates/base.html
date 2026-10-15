@@ -44,6 +44,8 @@
       <span class="ico">↥</span> 数据导入</a>
     <a class="side-link {% if request.url.path.startswith('/admin/exports') %}active{% endif %}" href="/admin/exports">
       <span class="ico">↓</span> 导出历史</a>
+    <a class="side-link {% if request.url.path.startswith('/admin/audit') %}active{% endif %}" href="/admin/audit">
+      <span class="ico">☰</span> 操作日志</a>
     {% endif %}
   </nav>
 
@@ -51,7 +53,10 @@
     {% if user %}
       <div class="who">{{ user.display_name or user.username }}</div>
       <div>{{ ROLE_LABELS.get(user.role, user.role) }}</div>
-      <a class="small" href="/logout" style="color:#7c8aa5">退出登录 →</a>
+      <div class="d-flex gap-2 mt-1">
+        <a class="small" href="/change-password" style="color:#7c8aa5">改密码</a>
+        <a class="small" href="/logout" style="color:#7c8aa5">退出登录 →</a>
+      </div>
     {% else %}
       <a href="/login">登录</a>
     {% endif %}

@@ -10,7 +10,13 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from ..auth import audit, verify_password
+from ..auth import (
+    audit,
+    hash_password,
+    require_csrf,
+    require_user,
+    verify_password,
+)
 from ..models import ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2, User, get_db
 from ..templates_setup import templates
 
@@ -93,3 +99,51 @@ async def home(request: Request, db: Session = Depends(get_db)) -> object:
         request.session.clear()
         return RedirectResponse("/login", status_code=303)
     return RedirectResponse(_home_for(user), status_code=303)
+
+
+@router.get("/change-password")
+async def change_password_page(
+    request: Request,
+    user: User = Depends(require_user),
+) -> object:
+    return templates.TemplateResponse(
+        request,
+        "change_password.html",
+        {
+            "user": user,
+            "error": request.session.pop("flash_error", ""),
+            "ok": request.session.pop("flash_ok", ""),
+        },
+    )
+
+
+@router.post("/change-password")
+async def change_password(
+    request: Request,
+    old_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(""),
+    csrf: str = Form(""),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+) -> object:
+    require_csrf(request, csrf)
+
+    def fail(msg: str) -> object:
+        request.session["flash_error"] = msg
+        return RedirectResponse("/change-password", status_code=303)
+
+    if not verify_password(old_password, user.password_hash):
+        return fail("原密码错误")
+    if len(new_password) < 6:
+        return fail("新密码至少 6 位")
+    if new_password != confirm_password:
+        return fail("两次输入的新密码不一致")
+    if new_password == old_password:
+        return fail("新密码不能与原密码相同")
+
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    audit(db, user, "password.change", f"{user.username} 修改了自己的密码")
+    request.session["flash_ok"] = "密码已修改"
+    return RedirectResponse("/change-password", status_code=303)
