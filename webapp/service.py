@@ -104,6 +104,7 @@ def build_snapshot(invoices: list[Invoice]) -> dict[str, Any]:
         "snapshot": snapshot,
         "editable": cells,
         "fields": fields,
+        "manual": _stored_manual(invoices),
         "meta": {
             "invoice_ids": [i.id for i in invoices],
             "invoice_nos": [i.invoice_no for i in invoices],
@@ -124,6 +125,26 @@ def _fields_for(result: BuildResult):
     from .converters.field_map import EDITABLE_FIELDS, EXTRA_FIELDS
 
     return list(EDITABLE_FIELDS) + list(EXTRA_FIELDS)
+
+
+def _stored_manual(invoices: list[Invoice]) -> dict[str, str]:
+    """读取发票上持久化的人工字段（取第一张有值的）。"""
+    for invoice in invoices:
+        try:
+            data = json.loads(invoice.manual_values or "{}")
+        except (TypeError, ValueError):
+            continue
+        if data:
+            return {str(k): str(v) for k, v in data.items() if v}
+    return {}
+
+
+def save_manual_values(db: Session, invoices: list[Invoice], values: dict[str, str]) -> None:
+    """把人工字段写回组内所有发票（合并导出共享同一份值）。"""
+    payload = json.dumps(values, ensure_ascii=False)
+    for invoice in invoices:
+        invoice.manual_values = payload
+    db.commit()
 
 
 def _field_applicable(key: str, result: BuildResult) -> bool:
@@ -188,6 +209,9 @@ def export_invoices(
         created_by=user.username if user else None,
     )
     db.add(job)
+    # 导出成功即持久化人工字段，下次打开编辑页自动回填
+    for invoice in invoices:
+        invoice.manual_values = json.dumps(values, ensure_ascii=False)
     db.commit()
     logger.info(
         "导出 {} by {}", out_path.name, user.username if user else "-"

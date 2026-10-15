@@ -115,6 +115,9 @@ class Invoice(Base):
     checked_by: Mapped[Optional[str]] = mapped_column(String(64))
     checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
+    # 人工填写字段的持久化 JSON（date/bill_no/ship_mode/... 按 field_map 的 key）
+    manual_values: Mapped[str] = mapped_column(Text, default="{}")
+
     items: Mapped[list["InvoiceItem"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
     )
@@ -197,6 +200,7 @@ def _migrate_check_fields() -> None:
             ("check_note", "TEXT DEFAULT ''"),
             ("checked_by", "VARCHAR(64)"),
             ("checked_at", "TIMESTAMP"),
+            ("manual_values", "TEXT DEFAULT '{}'"),
         ]
         for name, decl in cols:
             if name not in existing:

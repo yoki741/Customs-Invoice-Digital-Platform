@@ -158,7 +158,7 @@ function buildForm(fields, meta) {
   box.appendChild(dl);
 }
 
-function applyDefaults(meta, first) {
+function applyDefaults(meta, first, stored) {
   const set = (key, value) => {
     const el = inputs.get(key);
     if (el && value) el.value = value;
@@ -173,6 +173,17 @@ function applyDefaults(meta, first) {
               : /EASTEX|DAKOTA/i.test(meta.delivery_to) ? 'EASTEX' : '';
     set('supplier', sup);
   }
+  // 上次导出保存的人工字段优先（覆盖默认值）
+  let restored = 0;
+  if (stored) {
+    Object.keys(stored).forEach(key => {
+      if (stored[key] && inputs.has(key)) {
+        inputs.get(key).value = stored[key];
+        restored++;
+      }
+    });
+  }
+  if (restored) setStatus('已回填上次保存的人工字段（' + restored + ' 项）', 'text-info');
   syncAllToGrid();
 }
 
@@ -242,7 +253,8 @@ async function loadSnapshot() {
 
   buildForm(FIELDS, META);
   applyDefaults(META, {{ {'invoice_no': first.invoice_no, 'ship_mode': first.ship_mode,
-                          'vessel_flight': first.vessel_flight} | tojson }});
+                          'vessel_flight': first.vessel_flight} | tojson }},
+                data.manual || {});
   InvoiceGrid.load('grid', data.snapshot, data.editable, onGridChange);
   setStatus('已就绪');
 }
