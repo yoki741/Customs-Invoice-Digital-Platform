@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -62,6 +63,8 @@ async def invoice_list(
     transport: str = "",
     company: str = "",
     check_status: str = "",
+    date_from: str = "",
+    date_to: str = "",
     page: int = 1,
     user: User = Depends(require_type1),
     db: Session = Depends(get_db),
@@ -84,6 +87,20 @@ async def invoice_list(
         query = query.filter(Invoice.company == company)
     if check_status in (CHECK_PENDING, CHECK_PASSED, CHECK_FAILED):
         query = query.filter(Invoice.check_status == check_status)
+    if date_from.strip():
+        try:
+            d = datetime.strptime(date_from.strip(), "%Y-%m-%d")
+            query = query.filter(Invoice.uploaded_at >= d)
+        except ValueError:
+            pass
+    if date_to.strip():
+        try:
+            d = datetime.strptime(date_to.strip(), "%Y-%m-%d")
+            from datetime import timedelta
+
+            query = query.filter(Invoice.uploaded_at < d + timedelta(days=1))
+        except ValueError:
+            pass
 
     counts = {
         CHECK_PENDING: db.query(Invoice).filter(Invoice.check_status == CHECK_PENDING).count(),
@@ -112,6 +129,8 @@ async def invoice_list(
             "transport": transport,
             "company": company,
             "check_status": check_status,
+            "date_from": date_from,
+            "date_to": date_to,
             "counts": counts,
             "page": page,
             "pages": pages,

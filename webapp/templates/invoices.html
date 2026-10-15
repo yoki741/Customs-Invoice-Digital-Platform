@@ -46,6 +46,14 @@
           <option value="{{ CHECK_PASSED }}" {% if check_status == CHECK_PASSED %}selected{% endif %}>核对通过（{{ counts[CHECK_PASSED] }}）</option>
         </select>
       </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">导入日期 从</label>
+        <input type="date" class="form-control form-control-sm" name="date_from" value="{{ date_from }}">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">导入日期 到</label>
+        <input type="date" class="form-control form-control-sm" name="date_to" value="{{ date_to }}">
+      </div>
       <div class="col-auto">
         <button class="btn btn-primary btn-sm">筛选</button>
       </div>
@@ -95,7 +103,14 @@
             <td>{{ r.company or '-' }}</td>
             <td class="small">{{ r.delivery_to or '-' }}</td>
             <td class="small">{{ r.supplier_code or '-' }}</td>
-            <td><span class="badge text-bg-{{ CHECK_STYLES.get(r.check_status, 'secondary') }}" title="{{ r.check_note or '' }}">{{ CHECK_LABELS.get(r.check_status, r.check_status) }}</span></td>
+            <td>
+              <span class="badge text-bg-{{ CHECK_STYLES.get(r.check_status, 'secondary') }}"
+                    title="{{ r.check_note or '' }}">{{ CHECK_LABELS.get(r.check_status, r.check_status) }}</span>
+              {% if r.check_status == CHECK_FAILED and r.check_note %}
+              <div class="small text-danger text-truncate" style="max-width:180px"
+                   title="{{ r.check_note }}">{{ r.check_note }}</div>
+              {% endif %}
+            </td>
             <td class="num">{{ '%g' % r.rolls if r.rolls else '-' }}</td>
             <td class="num">{{ '%.2f' % r.net_weight if r.net_weight else '-' }}</td>
             <td class="num">{{ '%.2f' % r.gross_weight if r.gross_weight else '-' }}</td>
@@ -119,7 +134,7 @@
   <div class="card-footer d-flex justify-content-between align-items-center">
     <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
     <div>
-      {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company ~ '&check_status=' ~ check_status %}
+      {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company ~ '&check_status=' ~ check_status ~ '&date_from=' ~ date_from ~ '&date_to=' ~ date_to %}
       {% if page > 1 %}
       <a class="btn btn-sm btn-outline-secondary" href="/invoices?{{ qs }}&page={{ page - 1 }}">上一页</a>
       {% endif %}
