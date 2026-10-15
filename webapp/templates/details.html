@@ -56,10 +56,59 @@
 
 {% if not current %}
 <div class="alert alert-info py-2 mt-3 d-flex align-items-center gap-2">
-  <span>从上方「选择发票」下拉选中一张发票后，即可在下方看到<b>核对状态</b>和
+  <span>从上方「搜索发票」输入发票号或客户名，或在「选择发票」下拉选中一张发票后，
+  即可在下方看到<b>核对状态</b>和
   <span class="badge text-bg-success">核对通过</span> /
   <span class="badge text-bg-danger">标记问题</span> 按钮。</span>
 </div>
+
+{% if user and user.role in [ROLE_TYPE2, ROLE_ADMIN] and invoices %}
+<div class="card mt-3 no-print">
+  <div class="card-header py-2 d-flex align-items-center gap-2">
+    <span class="fw-semibold">批量核对</span>
+    <span class="small text-muted">勾选多张发票一键标记通过；有问题的发票请逐张填写说明</span>
+  </div>
+  <div class="card-body p-0">
+    <form method="post" action="/details/batch-check" id="batch-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="ids" id="batch-ids" value="">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width:34px"><input type="checkbox" class="form-check-input"
+                  onclick="toggleBatchAll(this)"></th>
+            <th>Invoice No.</th>
+            <th>Delivery to</th>
+            <th>运输</th>
+            <th>核对状态</th>
+            <th>问题说明</th>
+            <th>导入时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for i in invoices %}
+          <tr>
+            <td><input type="checkbox" class="form-check-input batch-check" value="{{ i.id }}"></td>
+            <td class="fw-semibold">{{ i.invoice_no or '-' }}</td>
+            <td class="small">{{ i.delivery_to or '-' }}</td>
+            <td>{% if i.transport %}<span class="badge badge-transport-{{ i.transport }}">{{ i.transport }}</span>{% endif %}</td>
+            <td><span class="badge text-bg-{{ CHECK_STYLES.get(i.check_status, 'secondary') }}">
+              {{ CHECK_LABELS.get(i.check_status, i.check_status) }}</span></td>
+            <td class="small">{{ i.check_note or '-' }}</td>
+            <td class="small text-muted">{{ i.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="card-footer d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-success" type="submit"
+                onclick="return submitBatch()">批量标记通过</button>
+        <span class="small text-muted">已勾选 <span id="batch-count">0</span> 张</span>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endif %}
 
 {% if current %}
@@ -182,5 +231,30 @@ function needNote(btn) {
   }
   return true;
 }
+
+function toggleBatchAll(box) {
+  document.querySelectorAll('.batch-check').forEach(c => { c.checked = box.checked; });
+  updateBatchCount();
+}
+
+function updateBatchCount() {
+  const n = document.querySelectorAll('.batch-check:checked').length;
+  const el = document.getElementById('batch-count');
+  if (el) el.textContent = n;
+}
+
+function submitBatch() {
+  const checked = [...document.querySelectorAll('.batch-check:checked')];
+  if (!checked.length) {
+    alert('请先勾选要核对通过的发票');
+    return false;
+  }
+  document.getElementById('batch-ids').value = checked.map(c => c.value).join(',');
+  return true;
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target.classList && e.target.classList.contains('batch-check')) updateBatchCount();
+});
 </script>
 {% endblock %}

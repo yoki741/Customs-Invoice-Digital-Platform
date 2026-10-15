@@ -165,3 +165,36 @@ async def detail_check(
         "message": f"{invoice.invoice_no} 已标记为「{CHECK_LABELS.get(status, status)}」",
     }
     return RedirectResponse(f"/details?invoice_id={invoice_id}", status_code=303)
+
+
+@router.post("/details/batch-check")
+async def detail_batch_check(
+    request: Request,
+    ids: str = Form(""),
+    user: User = Depends(require_type2),
+    db: Session = Depends(get_db),
+    _csrf: None = Depends(require_csrf),
+) -> object:
+    """批量标记核对通过（问题发票仍需逐张填写说明）。"""
+    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    if not id_list:
+        request.session["flash"] = {"level": "warning", "message": "请先勾选要核对的发票"}
+        return RedirectResponse("/details", status_code=303)
+
+    rows = db.query(Invoice).filter(Invoice.id.in_(id_list)).all()
+    now = datetime.utcnow()
+    passed = 0
+    for invoice in rows:
+        invoice.check_status = CHECK_PASSED
+        invoice.check_note = ""
+        invoice.checked_by = user.username
+        invoice.checked_at = now
+        passed += 1
+    db.commit()
+
+    audit(db, user, "check.batch", f"批量核对通过 {passed} 张: {ids[:200]}")
+    request.session["flash"] = {
+        "level": "success",
+        "message": f"已批量标记 {passed} 张发票为「核对通过」",
+    }
+    return RedirectResponse("/details", status_code=303)
