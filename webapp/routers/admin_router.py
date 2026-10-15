@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..auth import ROLE_ALL, audit, hash_password, require_admin, require_csrf
-from ..importer import import_source_file, save_upload
+from ..importer import import_source_file, save_upload, scan_uploads
 from ..models import ROLE_LABELS, ExportJob, Invoice, User, get_db
 from ..templates_setup import templates
 
@@ -175,7 +176,7 @@ async def upload_page(
     return templates.TemplateResponse(
         request,
         "admin_upload.html",
-        {"user": user, "results": None,
+        {"user": user, "results": None, "pending": None,
          "flash": request.session.pop("flash", None)},
     )
 
@@ -184,12 +185,54 @@ async def upload_page(
 async def upload_files(
     request: Request,
     csrf: str = Form(""),
+    confirm: str = Form(""),
+    pending_json: str = Form(""),
     files: list[UploadFile] = File(default=[]),
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
     require_csrf(request, csrf)
+
+    # 第二段：用户在确认页点了「确认导入」
+    if confirm == "1":
+        results = []
+        for entry in json.loads(pending_json or "[]"):
+            if not entry.get("overwrite"):
+                results.append({"file": entry["file"], "ok": False,
+                                "invoice_no": entry.get("invoice_no", "-"),
+                                "message": "已跳过（未勾选覆盖）"})
+                continue
+            path = Path(entry["path"])
+            if not path.exists():
+                results.append({"file": entry["file"], "ok": False,
+                                "invoice_no": entry.get("invoice_no", "-"),
+                                "message": "源文件不存在，请重新上传"})
+                continue
+            try:
+                invoice, created = import_source_file(db, path, user)
+                results.append(
+                    {"file": entry["file"], "ok": True,
+                     "invoice_no": invoice.invoice_no,
+                     "message": "新建" if created else "覆盖已有发票"}
+                )
+                audit(db, user, "import", f"{entry['file']} -> {invoice.invoice_no}")
+            except Exception as exc:
+                db.rollback()
+                results.append({"file": entry["file"], "ok": False,
+                                "invoice_no": entry.get("invoice_no", "-"),
+                                "message": str(exc)})
+        ok = sum(1 for r in results if r["ok"])
+        audit(db, user, "import.batch", f"确认导入 {len(results)} 个，成功 {ok} 个")
+        return templates.TemplateResponse(
+            request,
+            "admin_upload.html",
+            {"user": user, "results": results, "pending": None,
+             "flash": request.session.pop("flash", None)},
+        )
+
+    # 第一段：解析 + 检测重复，不入库
     results: list[dict] = []
+    pending: list[dict] = []
     for upload in files:
         if not upload.filename:
             continue
@@ -199,23 +242,42 @@ async def upload_files(
             continue
         try:
             path = save_upload(upload.filename, raw)
-            invoice, created = import_source_file(db, path, user)
-            results.append(
-                {"file": upload.filename, "ok": True,
-                 "invoice_no": invoice.invoice_no,
-                 "message": "新建" if created else "替换已有发票"}
-            )
-            audit(db, user, "import", f"{upload.filename} -> {invoice.invoice_no}")
+            scan = scan_uploads(db, path)
         except Exception as exc:
-            db.rollback()
             results.append({"file": upload.filename, "ok": False, "message": str(exc)})
+            continue
+        if scan["exists"]:
+            ex = scan["existing"] or {}
+            pending.append({
+                "file": upload.filename,
+                "path": str(path),
+                "invoice_no": scan["invoice_no"],
+                "uploaded_at": ex.get("uploaded_at").strftime("%Y-%m-%d %H:%M")
+                if ex.get("uploaded_at") else "-",
+                "uploaded_by": ex.get("uploaded_by") or "-",
+                "source_filename": ex.get("source_filename") or "-",
+            })
+        else:
+            try:
+                invoice, created = import_source_file(db, path, user)
+                results.append(
+                    {"file": upload.filename, "ok": True,
+                     "invoice_no": invoice.invoice_no,
+                     "message": "新建" if created else "替换已有发票"}
+                )
+                audit(db, user, "import", f"{upload.filename} -> {invoice.invoice_no}")
+            except Exception as exc:
+                db.rollback()
+                results.append({"file": upload.filename, "ok": False, "message": str(exc)})
 
     ok = sum(1 for r in results if r["ok"])
-    audit(db, user, "import.batch", f"上传 {len(results)} 个，成功 {ok} 个")
+    if results:
+        audit(db, user, "import.batch", f"上传 {len(results)} 个，成功 {ok} 个")
     return templates.TemplateResponse(
         request,
         "admin_upload.html",
-        {"user": user, "results": results},
+        {"user": user, "results": results, "pending": pending,
+         "flash": request.session.pop("flash", None)},
     )
 
 

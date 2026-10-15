@@ -38,6 +38,46 @@ def save_upload(file_name: str, content: bytes) -> Path:
     return target
 
 
+def scan_uploads(db: Session, file_path: Path) -> dict:
+    """解析源文件，返回导入预检信息（不入库）。
+
+    供上传确认页使用：先让用户看到「新建还是覆盖」，确认后才真正导入。
+
+    Returns:
+        {"invoice_no": str, "exists": bool, "existing": dict | None}
+
+    Raises:
+        ValueError: 解析失败或缺少 Invoice No.。
+    """
+    try:
+        data = read_source_file(file_path)
+    except Exception as exc:
+        raise ValueError(f"解析失败: {exc}") from exc
+
+    if not data.invoice_no:
+        raise ValueError("源文件缺少 Invoice No.（InputTable!C5）")
+
+    existing = (
+        db.query(Invoice)
+        .filter(Invoice.invoice_no == data.invoice_no)
+        .one_or_none()
+    )
+    return {
+        "invoice_no": data.invoice_no,
+        "exists": existing is not None,
+        "existing": (
+            {
+                "id": existing.id,
+                "uploaded_at": existing.uploaded_at,
+                "uploaded_by": existing.uploaded_by,
+                "source_filename": existing.source_filename,
+            }
+            if existing
+            else None
+        ),
+    }
+
+
 def import_source_file(
     db: Session,
     file_path: Path,

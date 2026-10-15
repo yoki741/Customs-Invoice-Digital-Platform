@@ -18,12 +18,49 @@
       <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <div class="mb-3">
         <input class="form-control" type="file" name="files" multiple accept=".xlsm,.xlsx" id="file-input" required>
-        <div class="small text-muted mt-1">支持多选；同 Invoice No. 会覆盖已有记录，文件保存在 data/uploads/</div>
+        <div class="small text-muted mt-1">支持多选；检测到重复 Invoice No. 会先提示，确认后才覆盖。文件保存在 data/uploads/</div>
       </div>
       <button class="btn btn-primary" id="btn-upload">导入</button>
     </form>
   </div>
 </div>
+
+{% if pending %}
+<div class="card mt-3 border-warning">
+  <div class="card-header bg-warning-subtle">发现重复 Invoice No.，请确认是否覆盖</div>
+  <div class="card-body">
+    <form method="post" action="/admin/upload" id="confirm-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
+      <input type="hidden" name="confirm" value="1">
+      <input type="hidden" name="pending_json" id="pending-json" value="[]">
+      <div class="table-responsive">
+        <table class="table table-sm mb-3">
+          <thead><tr>
+            <th>文件</th><th>Invoice No.</th><th>已有导入时间</th><th>已有导入人</th><th>已有源文件</th><th>操作</th>
+          </tr></thead>
+          <tbody>
+            {% for p in pending %}
+            <tr>
+              <td>{{ p.file }}</td>
+              <td class="fw-semibold">{{ p.invoice_no }}</td>
+              <td>{{ p.uploaded_at }}</td>
+              <td>{{ p.uploaded_by }}</td>
+              <td class="small">{{ p.source_filename }}</td>
+              <td><input type="checkbox" class="form-check-input overwrite-check"
+                         data-file="{{ p.file }}" data-path="{{ p.path }}"
+                         data-invoice-no="{{ p.invoice_no }}" data-overwrite="1" checked></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="small text-muted mb-3">勾选 = 覆盖已有发票；不勾选 = 跳过该文件。无重复的文件已直接导入。</div>
+      <button class="btn btn-warning" type="submit">确认导入</button>
+      <a class="btn btn-outline-secondary" href="/admin/upload">取消</a>
+    </form>
+  </div>
+</div>
+{% endif %}
 
 {% if results is not none %}
 <div class="card mt-3">
@@ -56,5 +93,18 @@ document.getElementById('upload-form').addEventListener('submit', () => {
   btn.disabled = true;
   btn.textContent = '导入中...';
 });
+
+const confirmForm = document.getElementById('confirm-form');
+if (confirmForm) {
+  confirmForm.addEventListener('submit', () => {
+    const all = [...document.querySelectorAll('.overwrite-check')].map(c => ({
+      file: c.dataset.file,
+      path: c.dataset.path,
+      invoice_no: c.dataset.invoiceNo,
+      overwrite: c.checked,
+    }));
+    document.getElementById('pending-json').value = JSON.stringify(all);
+  });
+}
 </script>
 {% endblock %}
