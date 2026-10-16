@@ -316,7 +316,8 @@ def workbook_to_snapshot(
             "id": sheet_id,
             "name": ws.title,
             "tabColor": "",
-            "hidden": 0,
+            # 保留模板里的隐藏状态（空运/陆运模板自带隐藏的空 Sheet1）
+            "hidden": 1 if ws.sheet_state != "visible" else 0,
             "freeze": {"xSplit": 0, "ySplit": 0, "startRow": 0, "startColumn": 0},
             "rowCount": row_count,
             "columnCount": col_count,
