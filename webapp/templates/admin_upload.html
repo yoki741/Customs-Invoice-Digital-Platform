@@ -88,7 +88,19 @@
 
 {% block scripts %}
 <script>
-document.getElementById('upload-form').addEventListener('submit', () => {
+const ALLOWED_EXT = ['.xlsm', '.xlsx'];
+document.getElementById('upload-form').addEventListener('submit', (e) => {
+  const input = document.getElementById('file-input');
+  const bad = [...input.files].filter(f => {
+    const dot = f.name.lastIndexOf('.');
+    return dot < 0 || !ALLOWED_EXT.includes(f.name.slice(dot).toLowerCase());
+  });
+  if (bad.length) {
+    e.preventDefault();
+    alert('以下文件格式不支持，仅接受 .xlsm / .xlsx：\n\n' +
+          bad.map(f => '· ' + f.name).join('\n'));
+    return;
+  }
   const btn = document.getElementById('btn-upload');
   btn.disabled = true;
   btn.textContent = '导入中...';

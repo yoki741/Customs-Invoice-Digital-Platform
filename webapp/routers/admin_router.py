@@ -22,6 +22,24 @@ def _flash(request: Request, level: str, message: str) -> None:
     request.session["flash"] = {"level": level, "message": message}
 
 
+def _friendly_import_error(exc: Exception) -> str:
+    """把解析层的英文/技术错误翻译成用户看得懂的提示。"""
+    text = str(exc)
+    lowered = text.lower()
+    if "does not support" in lowered and "file format" in lowered:
+        return "文件格式不支持，请上传 .xlsm / .xlsx Excel 文件"
+    if "is not a zip file" in lowered or "cannot open zlib" in lowered:
+        return "文件已损坏或不是有效的 Excel 文件，请检查后重新上传"
+    if "缺少 InputTable" in text:
+        return text.replace("'", "").strip("'")
+    if "Invoice No" in text:
+        return text.replace("'", "").strip("'")
+    if "PermissionError" in type(exc).__name__ or "permission" in lowered:
+        return "文件读取被拒绝，可能被其他程序占用，请关闭后重试"
+    # 其余情况截断长错误，避免整段堆栈吓到用户
+    return text[:200]
+
+
 # ---- 首页 ----
 
 
@@ -220,7 +238,7 @@ async def upload_files(
                 db.rollback()
                 results.append({"file": entry["file"], "ok": False,
                                 "invoice_no": entry.get("invoice_no", "-"),
-                                "message": str(exc)})
+                                "message": _friendly_import_error(exc)})
         ok = sum(1 for r in results if r["ok"])
         audit(db, user, "import.batch", f"确认导入 {len(results)} 个，成功 {ok} 个")
         return templates.TemplateResponse(
@@ -240,11 +258,22 @@ async def upload_files(
         if not raw:
             results.append({"file": upload.filename, "ok": False, "message": "空文件"})
             continue
+        # 扩展名预检：不合法直接提示，不落盘
+        suffix = Path(upload.filename).suffix.lower()
+        if suffix not in (".xlsm", ".xlsx"):
+            results.append({
+                "file": upload.filename, "ok": False,
+                "message": f"格式不支持：{suffix or '（无扩展名）'}，仅接受 .xlsm / .xlsx Excel 文件",
+            })
+            continue
         try:
             path = save_upload(upload.filename, raw)
             scan = scan_uploads(db, path)
         except Exception as exc:
-            results.append({"file": upload.filename, "ok": False, "message": str(exc)})
+            results.append({
+                "file": upload.filename, "ok": False,
+                "message": _friendly_import_error(exc),
+            })
             continue
         if scan["exists"]:
             ex = scan["existing"] or {}
@@ -268,7 +297,8 @@ async def upload_files(
                 audit(db, user, "import", f"{upload.filename} -> {invoice.invoice_no}")
             except Exception as exc:
                 db.rollback()
-                results.append({"file": upload.filename, "ok": False, "message": str(exc)})
+                results.append({"file": upload.filename, "ok": False,
+                                "message": _friendly_import_error(exc)})
 
     ok = sum(1 for r in results if r["ok"])
     if results:
