@@ -1,0 +1,463 @@
+# -*- coding: utf-8 -*-
+"""装柜列表（Shipment List）生成。
+
+把一次导出的发票汇总成装柜列表模板中的一行：
+- 表头固定在模板第 1 行，数据从第 2 行开始
+- ETA 按运输方式自动推算：空运 ETD+1，海运/汽运 ETD+8
+- VESSEL / Carrier 有源数据时预填，否则留空供人工填写
+"""
+
+from __future__ import annotations
+
+import re
+from copy import copy
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional, Sequence
+
+import openpyxl
+
+from .config import SHIPMENT_LIST_DIR, SHIPMENT_LIST_TEMPLATE
+from .source_reader import SourceData
+
+SHEET_NAME = "Sheet1"
+FIRST_DATA_ROW = 2
+EXPECTED_COLS = 20
+
+_CONTAINER_RE = re.compile(r"[A-Z]{4}\d{7}")
+_PLACE_PREFIXES = (
+    "port of loading:",
+    "port of loading：",
+    "place of receipt:",
+    "place of receipt：",
+    "origin:",
+    "origin：",
+    "装货港:",
+    "装货港：",
+    "起运地:",
+    "起运地：",
+)
+
+
+@dataclass
+class ShipmentRow:
+    """模板中的一行装柜记录。"""
+
+    date: Optional[date]
+    fty_inv: str = ""
+    shipper: str = ""
+    est_vco: str = ""
+    custom_no: str = ""
+    package: Optional[float] = None
+    blading: str = ""
+    containers: list[str] = field(default_factory=list)
+    nw_kg: float = 0.0
+    gw_kg: float = 0.0
+    description: str = ""
+    mode: str = ""
+    etd: Optional[date] = None
+    eta: Optional[date] = None
+    pol: str = ""
+    vessel: str = ""
+    carrier: str = ""
+
+    def cells(self) -> list[Any]:
+        """按模板 A-T 列返回单元格值。"""
+        values: list[Any] = [
+            self.date,
+            self.fty_inv,
+            self.shipper,
+            self.est_vco,
+            self.custom_no,
+            self.package,
+            self.blading,
+        ]
+        boxes = list(self.containers[:4])
+        values.extend(boxes + [None] * (4 - len(boxes)))
+        values.extend(
+            [
+                self.nw_kg,
+                self.gw_kg,
+                self.description,
+                self.mode,
+                self.etd,
+                self.eta,
+                self.pol,
+                self.vessel,
+                self.carrier,
+            ]
+        )
+        return values
+
+    def as_dict(self) -> dict[str, Any]:
+        """供数据库 / 页面使用的扁平字典。"""
+        return {
+            "date": _iso(self.date),
+            "fty_inv": self.fty_inv,
+            "shipper": self.shipper,
+            "est_vco": self.est_vco,
+            "custom_no": self.custom_no,
+            "package": self.package,
+            "blading": self.blading,
+            "container_1": self.containers[0] if len(self.containers) > 0 else "",
+            "container_2": self.containers[1] if len(self.containers) > 1 else "",
+            "container_3": self.containers[2] if len(self.containers) > 2 else "",
+            "container_4": self.containers[3] if len(self.containers) > 3 else "",
+            "nw_kg": self.nw_kg,
+            "gw_kg": self.gw_kg,
+            "description": self.description,
+            "mode": self.mode,
+            "etd": _iso(self.etd),
+            "eta": _iso(self.eta),
+            "pol": self.pol,
+            "vessel": self.vessel,
+            "carrier": self.carrier,
+        }
+
+
+def _iso(value: Optional[date]) -> str:
+    return value.strftime("%Y-%m-%d") if value else ""
+
+
+def parse_date(value: Any) -> Optional[date]:
+    """把日期 / 日期时间 / 常见字符串统一转成 date。"""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    candidates = {text, text[:10], text[:19]}
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d", "%m/%d/%Y"):
+        for candidate in candidates:
+            try:
+                return datetime.strptime(candidate, fmt).date()
+            except ValueError:
+                continue
+    return None
+
+
+def _text(value: Any) -> str:
+    """清理单元格文本：去掉 Excel 换行标记与多余空白。"""
+    text = str(value or "")
+    text = text.replace("_x000D_", " ").replace("\r", " ").replace("\n", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _num(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def company_from(sources: Sequence[SourceData]) -> str:
+    """从 Delivery to / Bill to 识别我司工厂（Eastex / Vanco）。"""
+    for source in sources:
+        blob = f"{source.delivery_to} {source.bill_to}".upper()
+        if "VANCO" in blob:
+            return "Vanco"
+        if "EASTEX" in blob:
+            return "Eastex"
+    return ""
+
+
+def suffix_for(company: str) -> str:
+    """清关文件发票号后缀：Eastex=_BT，Vanco=_CT。"""
+    return "CT" if company == "Vanco" else "BT"
+
+
+def mode_from(transport: str = "", ship_mode: str = "") -> str:
+    """运输方式统一成模板使用的 AIR / SEA / TRUCK。"""
+    blob = f"{transport} {ship_mode}".upper()
+    if "AIR" in blob or "空运" in blob:
+        return "AIR"
+    if "TRUCK" in blob or "陆运" in blob:
+        return "TRUCK"
+    return "SEA"
+
+
+def eta_for(mode: str, etd: Optional[date]) -> Optional[date]:
+    """ETA 规则：空运 ETD+1，海运/汽运 ETD+8。"""
+    if etd is None:
+        return None
+    return etd + timedelta(days=1 if mode == "AIR" else 8)
+
+
+def _distinct(values: Sequence[Any]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = _text(value)
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def _clean_place(value: str) -> str:
+    text = value.strip()
+    lowered = text.lower()
+    for prefix in _PLACE_PREFIXES:
+        if lowered.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
+
+
+def _containers(manual_info: str, source_numbers: Sequence[str]) -> list[str]:
+    """提取柜号：优先手工填写内容，其次源文件柜号，最多 4 个。"""
+    found: list[str] = []
+    for text in (manual_info, *source_numbers):
+        if not text:
+            continue
+        upper = text.upper()
+        matches = _CONTAINER_RE.findall(upper)
+        if matches:
+            candidates = matches
+        else:
+            candidates = [
+                part.strip()
+                for part in re.split(r"[,;/\n\r]+", text)
+                if part.strip()
+            ]
+        for item in candidates:
+            if item and item not in found:
+                found.append(item)
+    return found[:4]
+
+
+def build_row(
+    sources: Sequence[SourceData],
+    manual: Optional[dict[str, Any]] = None,
+    *,
+    company: str = "",
+    transport: str = "",
+) -> ShipmentRow:
+    """把一批（同一次导出的）源文件汇总成一行装柜记录。"""
+    if not sources:
+        raise ValueError("没有可汇总的源文件")
+    manual = manual or {}
+    first = sources[0]
+
+    resolved_company = company or company_from(sources)
+    bill_no = _text(manual.get("bill_no")) or _text(first.invoice_no)
+    mode = mode_from(transport, first.ship_mode or _text(manual.get("ship_mode")))
+
+    etd = parse_date(first.invoice_date) or parse_date(first.etd)
+    row_date = parse_date(manual.get("date")) or etd
+
+    po_numbers = _distinct(
+        [item.po_no for source in sources for item in source.items]
+    )
+    invoice_numbers = _distinct([source.invoice_no for source in sources])
+    shippers = _distinct([source.supplier_code for source in sources])
+    agents = _distinct([source.customs_agent for source in sources])
+    vessels = _distinct([source.vessel_flight for source in sources])
+    descriptions = _distinct(
+        [item.description for source in sources for item in source.items]
+    )
+    if not descriptions:
+        descriptions = _distinct(
+            [item.fabric_type for source in sources for item in source.items]
+        )
+
+    rolls = sum(_num(source.rolls) for source in sources)
+    if rolls <= 0:
+        rolls = sum(
+            _num(item.carton) for source in sources for item in source.items
+        )
+
+    package = round(rolls, 3)
+    if package == int(package):
+        package = int(package)
+
+    place = _clean_place(_text(manual.get("place_receipt"))) or _text(
+        first.origin_place
+    )
+
+    return ShipmentRow(
+        date=row_date,
+        fty_inv=", ".join(po_numbers) or ", ".join(invoice_numbers),
+        shipper=", ".join(shippers),
+        est_vco=resolved_company,
+        custom_no=f"{bill_no}_{suffix_for(resolved_company)}" if bill_no else "",
+        package=package or None,
+        blading=bill_no,
+        containers=_containers(
+            _text(manual.get("container_info")),
+            [source.container_number or "" for source in sources],
+        ),
+        nw_kg=round(sum(_num(source.net_weight) for source in sources), 3),
+        gw_kg=round(sum(_num(source.gross_weight) for source in sources), 3),
+        description=" / ".join(descriptions),
+        mode=mode,
+        etd=etd,
+        eta=eta_for(mode, etd),
+        pol=place,
+        vessel=_text(manual.get("flight_no")) or ", ".join(vessels),
+        carrier=", ".join(agents),
+    )
+
+
+def _company_from_consignee(value: str) -> str:
+    """从清关文件 Consignee 名称识别我司工厂（Vanco / Eastex）。"""
+    blob = value.upper()
+    if "VANCO" in blob:
+        return "Vanco"
+    if "EASTEX" in blob or "DAKOTA" in blob:
+        return "Eastex"
+    return ""
+
+
+def _read_ref(ws: Any) -> str:
+    """读取 INV1 的 REF 行内容，去掉 "REF:" 前缀。"""
+    for row in range(24, 61):
+        value = ws[f"A{row}"].value
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text.upper().startswith("REF"):
+            idx = text.find(":")
+            return text[idx + 1 :].strip() if idx >= 0 else text[3:].strip()
+    return ""
+
+
+def _read_fabric_types(ws: Any) -> list[str]:
+    """读取 INV1 的面料分类（D 列中带报关重量 G 的行）。"""
+    found: list[str] = []
+    for row in range(24, 61):
+        d_val = ws[f"D{row}"].value
+        g_val = ws[f"G{row}"].value
+        if d_val is None or g_val is None:
+            continue
+        text = _text(d_val)
+        if text and text not in found:
+            found.append(text)
+    return found
+
+
+def _read_containers(ws: Any) -> list[str]:
+    """读取 INV1 的 CONTAINER 区（最多 3 行）并提取柜号。"""
+    container_row: Optional[int] = None
+    for row in range(1, 61):
+        value = ws[f"A{row}"].value
+        if value and "CONTAINER" in str(value).upper():
+            container_row = row
+            break
+    if container_row is None:
+        return []
+    lines = [
+        str(ws[f"A{row}"].value)
+        for row in range(container_row + 1, container_row + 4)
+        if ws[f"A{row}"].value
+    ]
+    return _containers("", lines)
+
+
+def build_row_from_result(
+    workbook: openpyxl.Workbook,
+    *,
+    company: str = "",
+    transport: str = "",
+    customs_weight: float = 0.0,
+) -> ShipmentRow:
+    """从清关文件工作簿（INV1/PKL1）提取装柜列表一行。
+
+    数据来源是导出生成的清关文件（结果文件），而非源发票文件：
+    - 抬头（Shipper）= INV1!A1，Consignee（EST/VCO）= INV1!B9
+    - Date = INV1!J9，Invoice No = INV1!J10，Ship mode = INV1!B17
+    - Fty Inv = INV1 REF 行，POL = INV1!A18（陆运 A19）
+    - 分类 = INV1 D 列，集装箱 = INV1 CONTAINER 区
+    - 净重 = 报关净重（传入 customs_weight），毛重 = PKL1!K24
+    - Package / ETD / VESSEL / Carrier 为手动字段，留空供人工补齐
+    """
+    ws_inv1 = workbook["INV1"]
+
+    shipper = _text(ws_inv1["A1"].value)
+    consignee = _text(ws_inv1["B9"].value)
+    resolved_company = company or _company_from_consignee(consignee)
+    row_date = parse_date(ws_inv1["J9"].value)
+    bill_no = _text(ws_inv1["J10"].value)
+    mode = mode_from(transport, _text(ws_inv1["B17"].value))
+
+    fty_inv = _read_ref(ws_inv1)
+    pol_cell = "A19" if transport == "陆运" else "A18"
+    pol = _clean_place(_text(ws_inv1[pol_cell].value))
+    descriptions = _read_fabric_types(ws_inv1)
+    containers = _read_containers(ws_inv1)
+
+    gw_kg = 0.0
+    if "PKL1" in workbook.sheetnames:
+        gw_kg = _num(workbook["PKL1"]["K24"].value)
+
+    return ShipmentRow(
+        date=row_date,
+        fty_inv=fty_inv,
+        shipper=shipper,
+        est_vco=resolved_company,
+        custom_no=f"{bill_no}_{suffix_for(resolved_company)}" if bill_no else "",
+        package=None,
+        blading=bill_no,
+        containers=containers,
+        nw_kg=round(_num(customs_weight), 3),
+        gw_kg=round(gw_kg, 3),
+        description=" / ".join(descriptions),
+        mode=mode,
+        etd=None,
+        eta=None,
+        pol=pol,
+        vessel="",
+        carrier="",
+    )
+
+
+def month_of(value: Optional[date]) -> str:
+    """返回 YYYY-MM；无日期时用当前月份。"""
+    return (value or date.today()).strftime("%Y-%m")
+
+
+def month_path(month: str) -> Path:
+    """月度装柜列表文件路径（month 需为 YYYY-MM）。"""
+    return SHIPMENT_LIST_DIR / f"Shipment List {month}.xlsx"
+
+
+def write_workbook(
+    rows: Sequence[ShipmentRow],
+    out_path: str | Path,
+    template: str | Path | None = None,
+) -> Path:
+    """按模板生成装柜列表文件，返回输出路径。"""
+    out = Path(out_path)
+    source_template = Path(template or SHIPMENT_LIST_TEMPLATE)
+    if not source_template.exists():
+        raise FileNotFoundError(f"装柜列表模板不存在: {source_template}")
+
+    workbook = openpyxl.load_workbook(str(source_template))
+    try:
+        ws = workbook[SHEET_NAME]
+        for row in range(FIRST_DATA_ROW, ws.max_row + 1):
+            for col in range(1, EXPECTED_COLS + 1):
+                ws.cell(row=row, column=col).value = None
+
+        for offset, record in enumerate(rows):
+            target_row = FIRST_DATA_ROW + offset
+            for col, value in enumerate(record.cells(), start=1):
+                cell = ws.cell(row=target_row, column=col)
+                style_cell = ws.cell(row=FIRST_DATA_ROW, column=col)
+                if target_row != FIRST_DATA_ROW:
+                    cell.font = copy(style_cell.font)
+                    cell.border = copy(style_cell.border)
+                    cell.fill = copy(style_cell.fill)
+                    cell.alignment = copy(style_cell.alignment)
+                    cell.number_format = style_cell.number_format
+                cell.value = value
+
+        out.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(str(out))
+    finally:
+        workbook.close()
+    return out

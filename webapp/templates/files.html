@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}报关发票 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
+{% block heading %}报关发票{% endblock %}
+{% block crumb %}共 {{ total }} 份
+<span class="ico-q ms-1" data-bs-toggle="tooltip" data-bs-placement="bottom"
+      data-bs-html="true"
+      title="每份报关发票在平台<b>唯一</b>，按固定命名规则命名（如 26LF0845 / EASTEX INV#26LF0845-BT(SEA).xlsm）。<br>多人修改时每次生成/保存都会留下修改记录（谁、何时、改了什么），点击「修改记录」可查看完整时间线。<br>每次生成前的旧文件自动留底可下载比对。">?</span>
+{% endblock %}
+
+{% block head %}
+{% endblock %}
+
+{% block content %}
+
+{% if flash %}
+<div class="alert alert-{{ flash.level }} alert-dismissible py-2">
+  {{ flash.message }}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="card no-print">
+  <div class="card-body py-2">
+    <form method="get" action="/files" class="d-flex gap-2">
+      <input class="form-control form-control-sm" name="q" value="{{ q }}"
+             placeholder="按文件名 / 提单号 / 操作人搜索" style="max-width:360px">
+      <button class="btn btn-primary btn-sm">搜索</button>
+    </form>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>报关发票文件</th>
+            <th>最近生成</th>
+            <th>最近操作人</th>
+            <th>生成次数</th>
+            <th>SHA256</th>
+            <th class="text-end">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in rows %}
+          <tr>
+            <td class="small text-break fw-semibold">{{ g.folder }}/{{ g.filename }}</td>
+            <td class="small">{{ g.latest.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ g.latest.created_by or '-' }}</td>
+            <td>{{ g.count }} 次</td>
+            <td class="small text-muted" title="{{ g.latest.sha256 }}">{{ g.latest.sha256[:8] }}</td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary py-0"
+                      onclick="previewFile('{{ g.folder }}', '{{ g.filename }}')">预览</button>
+              <button class="btn btn-sm btn-outline-info py-0"
+                      onclick="showHistory('{{ g.folder }}', '{{ g.filename }}')">修改记录</button>
+              {% set dl = '/api/download?folder=' ~ g.folder ~ '&name=' ~ g.filename %}
+              <a class="btn btn-sm btn-outline-secondary py-0" href="{{ dl }}">下载</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">暂无报关发票，请在「发票列表」勾选发票后生成</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if pages > 1 %}
+  <div class="card-footer d-flex justify-content-between">
+    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <div>
+      {% if page > 1 %}
+      <a class="btn btn-sm btn-outline-secondary" href="/files?q={{ q }}&page={{ page - 1 }}">上一页</a>
+      {% endif %}
+      {% if page < pages %}
+      <a class="btn btn-sm btn-outline-secondary" href="/files?q={{ q }}&page={{ page + 1 }}">下一页</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="modal fade" id="preview-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <span class="fw-semibold small" id="preview-title">-</span>
+        <div class="btn-group btn-group-sm ms-3" id="preview-sheets"></div>
+        <button type="button" class="btn-close ms-auto" onclick="closePreview()"></button>
+      </div>
+      <div class="modal-body p-1" style="height:78vh">
+        <div id="preview-grid" style="width:100%;height:100%"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="history-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <span class="fw-semibold small" id="history-title">修改记录</span>
+        <button type="button" class="btn-close ms-auto" onclick="closeHistory()"></button>
+      </div>
+      <div class="modal-body" style="max-height:70vh;overflow-y:auto" id="history-body">
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let previewModal = null;
+let historyModal = null;
+let univerLoading = null;
+
+function ensureUniver() {
+  if (window.InvoiceGrid) return Promise.resolve();
+  if (univerLoading) return univerLoading;
+  univerLoading = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = '/static/vendor/univer.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = '/static/vendor/univer.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Univer 组件加载失败'));
+    document.head.appendChild(s);
+  });
+  return univerLoading;
+}
+
+async function previewFile(folder, name) {
+  const title = document.getElementById('preview-title');
+  title.textContent = '加载中...';
+  let res;
+  try {
+    res = await fetch('/api/files/preview?folder=' + encodeURIComponent(folder) +
+                      '&name=' + encodeURIComponent(name));
+  } catch (err) {
+    alert('预览请求失败: ' + err);
+    return;
+  }
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || '预览失败'); return; }
+
+  try {
+    await ensureUniver();
+  } catch (err) {
+    alert(err.message || '预览组件加载失败');
+    return;
+  }
+
+  const lock = {};
+  Object.values(data.snapshot.sheets || {}).forEach(s => { lock[s.name] = []; });
+  InvoiceGrid.load('preview-grid', data.snapshot, lock, null);
+
+  const box = document.getElementById('preview-sheets');
+  box.innerHTML = '';
+  Object.values(data.snapshot.sheets || {}).forEach(s => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline-secondary';
+    btn.textContent = s.name;
+    btn.onclick = () => InvoiceGrid.showSheet(s.name);
+    box.appendChild(btn);
+  });
+
+  title.textContent = name;
+  if (!previewModal) {
+    previewModal = new bootstrap.Modal(document.getElementById('preview-modal'));
+  }
+  previewModal.show();
+}
+
+function closePreview() {
+  if (previewModal) previewModal.hide();
+}
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function multiline(v) {
+  return esc(v).replace(/\n/g, '<br>');
+}
+
+async function showHistory(folder, name) {
+  const body = document.getElementById('history-body');
+  document.getElementById('history-title').textContent = '修改记录：' + folder + '/' + name;
+  body.innerHTML = '<div class="text-muted small py-4 text-center">加载中...</div>';
+  if (!historyModal) {
+    historyModal = new bootstrap.Modal(document.getElementById('history-modal'));
+  }
+  historyModal.show();
+  let res;
+  try {
+    res = await fetch('/api/files/history?folder=' + encodeURIComponent(folder) +
+                      '&name=' + encodeURIComponent(name));
+  } catch (err) {
+    body.innerHTML = '<div class="text-danger small">加载失败: ' + err + '</div>';
+    return;
+  }
+  const data = await res.json();
+  if (!data.ok) {
+    body.innerHTML = '<div class="text-danger small">' + (data.error || '加载失败') + '</div>';
+    return;
+  }
+  if (!data.rows.length) {
+    body.innerHTML = '<div class="text-muted small py-4 text-center">暂无修改记录</div>';
+    return;
+  }
+  let html = '<ul class="list-group list-group-flush small">';
+  data.rows.forEach(r => {
+    const badge = r.kind === 'export'
+      ? '<span class="badge text-bg-primary">生成文件</span>'
+      : '<span class="badge text-bg-secondary">编辑保存</span>';
+    let extra = '';
+    if (r.kind === 'export') {
+      if (r.version) extra += ' · 第 ' + r.version + ' 次生成';
+      extra += ' | SHA256: ' + esc(r.sha);
+      if (r.backup) {
+        extra += ' | <a href="' + r.backup + '">下载此前的旧文件留底</a>';
+      }
+    }
+    let changesHtml = '';
+    if (r.changes && r.changes.length) {
+      changesHtml = '<div class="mt-1">' + r.changes.map(c => {
+        const oldText = c.old
+          ? '<span class="text-muted text-decoration-line-through">' + multiline(c.old) + '</span> → '
+          : '';
+        const newText = c.new ? multiline(c.new) : '<span class="text-muted">（空）</span>';
+        return '<div><span class="text-muted">' + esc(c.label) + ':</span> ' +
+               oldText + '<b>' + newText + '</b></div>';
+      }).join('') + '</div>';
+    } else {
+      changesHtml = '<div class="text-muted mt-1">无字段变更</div>';
+    }
+    let formHtml = '';
+    if (r.form) {
+      formHtml = '<details class="mt-1"><summary class="text-muted">查看完整字段</summary>' +
+                 '<div class="text-muted">' + multiline(r.form) + '</div></details>';
+    }
+    html += '<li class="list-group-item py-2">' +
+      '<div>' + badge + ' <b>' + esc(r.by) + '</b> · ' + esc(r.time) + extra + '</div>' +
+      changesHtml + formHtml + '</li>';
+  });
+  html += '</ul>';
+  body.innerHTML = html;
+}
+
+function closeHistory() {
+  if (historyModal) historyModal.hide();
+}
+</script>
+{% endblock %}

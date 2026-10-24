@@ -17,10 +17,21 @@
     <form method="post" action="/admin/upload" enctype="multipart/form-data" id="upload-form">
       <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <div class="mb-3">
-        <input class="form-control" type="file" name="files" multiple accept=".xlsm,.xlsx" id="file-input" required>
-        <div class="small text-muted mt-1">支持多选；检测到重复 Invoice No. 会先提示，确认后才覆盖。文件保存在 data/uploads/</div>
+        <div id="drop-zone" class="border border-2 rounded-3 text-center py-4 px-3"
+             style="border-style: dashed !important; cursor: pointer; background:#f8fafc">
+          <div class="fs-4 text-muted">⇪</div>
+          <div>点击选择文件，或将多个文件<b>拖到这里</b></div>
+          <div class="small text-muted mt-1">
+            支持多选：按住 <b>Ctrl</b> 逐个点击、按住 <b>Shift</b> 连选、或整个文件夹拖入<br>
+            仅接受 .xlsm / .xlsx，单文件不超过 20MB
+          </div>
+        </div>
+        <input class="d-none" type="file" name="files" multiple accept=".xlsm,.xlsx" id="file-input">
+        <div id="file-list" class="mt-2 small"></div>
+        <div class="small text-muted mt-1">检测到重复 Invoice No. 会先提示，确认后才覆盖。文件保存在 data/uploads/</div>
       </div>
-      <button class="btn btn-primary" id="btn-upload">导入</button>
+      <button class="btn btn-primary" id="btn-upload">导入所选文件</button>
+      <span class="small text-muted ms-2" id="file-count"></span>
     </form>
   </div>
 </div>
@@ -89,9 +100,55 @@
 {% block scripts %}
 <script>
 const ALLOWED_EXT = ['.xlsm', '.xlsx'];
+const fileInput = document.getElementById('file-input');
+const dropZone = document.getElementById('drop-zone');
+const fileList = document.getElementById('file-list');
+const fileCount = document.getElementById('file-count');
+
+function renderFiles() {
+  const files = [...fileInput.files];
+  fileCount.textContent = files.length ? ('已选择 ' + files.length + ' 个文件') : '';
+  fileList.innerHTML = '';
+  files.forEach((f, i) => {
+    const span = document.createElement('span');
+    span.className = 'badge bg-light text-dark border me-1 mb-1';
+    span.textContent = f.name;
+    fileList.appendChild(span);
+  });
+}
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('border-primary');
+});
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-primary'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('border-primary');
+  const dt = e.dataTransfer;
+  if (dt && dt.files && dt.files.length) {
+    const allowed = [...dt.files].filter(f => {
+      const dot = f.name.lastIndexOf('.');
+      return dot >= 0 && ALLOWED_EXT.includes(f.name.slice(dot).toLowerCase());
+    });
+    if (!allowed.length) { alert('仅支持 .xlsm / .xlsx 文件'); return; }
+    const dt2 = new DataTransfer();
+    allowed.forEach(f => dt2.items.add(f));
+    fileInput.files = dt2.files;
+    renderFiles();
+  }
+});
+fileInput.addEventListener('change', renderFiles);
+
 document.getElementById('upload-form').addEventListener('submit', (e) => {
-  const input = document.getElementById('file-input');
-  const bad = [...input.files].filter(f => {
+  const files = [...fileInput.files];
+  if (!files.length) {
+    e.preventDefault();
+    alert('请先选择或拖入要导入的文件');
+    return;
+  }
+  const bad = files.filter(f => {
     const dot = f.name.lastIndexOf('.');
     return dot < 0 || !ALLOWED_EXT.includes(f.name.slice(dot).toLowerCase());
   });

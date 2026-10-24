@@ -31,9 +31,9 @@ EDITABLE_FIELDS: list[EditableField] = [
                   "例如 by Sea / by AIR / by TRUCK", required=True),
     EditableField("place_receipt", "起运地 / 装货港", "INV1", "A18",
                   "海运 Port of loading、空运 Airport of departure、"
-                  "陆运 Place of initial receipt，只填冒号后的值"),
+                  "陆运 Place of initial receipt。与表格单元格显示一致（保留冒号前的标签文字）"),
     EditableField("port_loading", "陆运口岸 Port of loading", "INV1", "A19",
-                  "仅陆运需要，只填冒号后的值"),
+                  "仅陆运需要。与表格单元格显示一致（保留冒号前的标签文字）"),
     EditableField("container_info", "集装箱 / 封号", "INV1", None,
                   "CONTAINER NO / SEAL NO 区域，最多 3 行", multiline=True),
     EditableField("flight_no", "Flight No. 航班号", "PKL1", "I17",
@@ -47,6 +47,9 @@ EXTRA_FIELDS: list[EditableField] = [
     EditableField("supplier", "供应商名", "", "",
                   "决定输出文件名前缀（VANCO / EASTEX ...）", group="输出信息",
                   required=True),
+    EditableField("unit_prices", "单价（可手动修改）", "", "",
+                  "默认按单价表自动读取，可按面料类型手动填写覆盖",
+                  group="自动计算", multiline=False, required=False),
 ]
 
 ALLOWED_KEYS: set[str] = {f.key for f in EDITABLE_FIELDS} | {f.key for f in EXTRA_FIELDS}

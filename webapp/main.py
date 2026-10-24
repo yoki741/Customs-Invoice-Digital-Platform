@@ -13,17 +13,15 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from jinja2 import pass_context
 from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from core.config import BASE_DIR, ensure_dirs
 from .auth import LoginRequired, PermissionDenied, get_secret_key, hash_password, setup_logging
 from .models import (
-    CHECK_FAILED,
-    CHECK_PENDING,
     ROLE_ADMIN,
-    Invoice,
     User,
     SessionLocal,
     init_db,
@@ -37,6 +35,18 @@ init_db()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+
+class _StaticCacheMiddleware(BaseHTTPMiddleware):
+    """给静态资源加缓存头（带 must-revalidate，改版后能及时刷新）。"""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers.setdefault(
+                "Cache-Control", "public, max-age=86400, must-revalidate"
+            )
+        return response
+
 app = FastAPI(title="報關發票(柬埔寨)數字化管理平台", docs_url=None, redoc_url=None)
 app.add_middleware(
     SessionMiddleware,
@@ -45,34 +55,14 @@ app.add_middleware(
     https_only=False,
     max_age=60 * 60 * 12,
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(_StaticCacheMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(auth_router.router)
 app.include_router(invoice_router.router)
 app.include_router(detail_router.router)
 app.include_router(admin_router.router)
-
-
-@pass_context
-def _sidebar_counts(ctx) -> dict:
-    """侧栏角标：有问题待处理数、待核对数。"""
-    request = ctx.get("request")
-    if request is None or request.session.get("uid") is None:
-        return {"issue_count": 0, "pending_count": 0}
-    db = SessionLocal()
-    try:
-        issue_count = (
-            db.query(Invoice).filter(Invoice.check_status == CHECK_FAILED).count()
-        )
-        pending_count = (
-            db.query(Invoice).filter(Invoice.check_status == CHECK_PENDING).count()
-        )
-        return {"issue_count": issue_count, "pending_count": pending_count}
-    finally:
-        db.close()
-
-
-templates.env.globals["sidebar_counts"] = _sidebar_counts
 
 
 # ---- 异常处理 ----
@@ -99,6 +89,25 @@ async def _permission_denied(request: Request, exc: PermissionDenied) -> Respons
             "user_id": user_id,
         },
         status_code=403,
+    )
+
+
+@app.exception_handler(Exception)
+async def _server_error(request: Request, exc: Exception) -> Response:
+    """兜底 500：记录日志，显示友好错误页。"""
+    logger.exception("未处理异常: {} {}", request.method, request.url.path)
+    return templates.TemplateResponse(
+        request,
+        "message.html",
+        {
+            "user": None,
+            "level": "danger",
+            "title": "系统出错了",
+            "message": "系统处理请求时发生错误，请稍后重试；如持续出现请联系管理员。",
+            "back": "/",
+            "user_id": request.session.get("uid"),
+        },
+        status_code=500,
     )
 
 

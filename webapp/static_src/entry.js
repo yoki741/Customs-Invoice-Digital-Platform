@@ -12,6 +12,7 @@ const state = {
   idToName: new Map(),
   onChange: null,
   guardReady: false,
+  suppress: new Set(), // 程序化写入的 "sheetId:r,c"，不回声到表单
 };
 
 function parseA1(a1) {
@@ -39,6 +40,7 @@ function buildIndex(snapshot) {
   state.fieldIndex.clear();
   state.nameToId.clear();
   state.idToName.clear();
+  state.suppress.clear();
   Object.values(snapshot.sheets || {}).forEach((s) => {
     state.nameToId.set(s.name, s.id);
     state.idToName.set(s.id, s.name);
@@ -83,36 +85,60 @@ function ensureGuard() {
   state.guardReady = true;
   const api = state.univerAPI;
 
+  const commandRanges = (params) => {
+    if (params.range) return [params.range];
+    if (Array.isArray(params.ranges) && params.ranges.length) return params.ranges;
+    return [];
+  };
+
+  const sheetIdOf = (params) =>
+    (params.range && params.range.sheetId) ||
+    params.subUnitId ||
+    params.sheetId ||
+    api.getActiveWorkbook?.()?.getActiveSheet?.()?.getSheetId?.() ||
+    '';
+
   api.addEvent(api.Event.BeforeCommandExecute, (event) => {
     const id = String(event.id || '');
-    if (!id.includes('set-range-values')) return;
+    const isSet = id.includes('set-range-values');
+    const isClear = id.includes('clear-selection');
+    if (!isSet && !isClear) return;
     const params = event.params || {};
-    const range = params.range || (params.value && params.value.getRange?.()) || null;
-    const sheetId = params.sheetId || params.unitId || null;
-    if (!range) return;
-    const sid = sheetId || (api.getActiveWorkbook?.()?.getActiveSheet?.()?.getSheetId?.()) || '';
-    if (!inEditable(sid, range)) event.cancel = true;
+    const ranges = commandRanges(params);
+    if (!ranges.length) return;
+    const sid = sheetIdOf(params);
+    if (!ranges.every((r) => inEditable(sid, r))) event.cancel = true;
   });
 
   api.addEvent(api.Event.CommandExecuted, (event) => {
     const id = String(event.id || '');
-    if (!id.includes('set-range-values')) return;
+    const isSet = id.includes('set-range-values');
+    const isClear = id.includes('clear-selection');
+    if (!isSet && !isClear) return;
     if (typeof state.onChange !== 'function') return;
     const params = event.params || {};
-    const range = params.range;
-    if (!range) return;
+    const ranges = commandRanges(params);
+    if (!ranges.length) return;
     const wb = api.getActiveWorkbook();
     if (!wb) return;
-    const sheetId = range.sheetId || params.sheetId || wb.getActiveSheet?.()?.getSheetId?.();
-    const coord = state.fieldIndex.get(`${sheetId}:${range.startRow},${range.startColumn}`);
-    if (!coord) return;
-    try {
-      const sheet = wb.getSheetBySheetId(sheetId);
-      const value = sheet.getRange(coord).getValue();
-      state.onChange(state.idToName.get(sheetId), coord, value);
-    } catch (err) {
-      console.warn('读取单元格失败', err);
-    }
+    ranges.forEach((range) => {
+      const sheetId = range.sheetId || params.subUnitId || params.sheetId ||
+        wb.getActiveSheet?.()?.getSheetId?.();
+      const rkey = `${sheetId}:${range.startRow},${range.startColumn}`;
+      if (state.suppress.has(rkey)) {
+        state.suppress.delete(rkey);
+        return;
+      }
+      const coord = state.fieldIndex.get(rkey);
+      if (!coord) return;
+      try {
+        const sheet = wb.getSheetBySheetId(sheetId);
+        const value = sheet.getRange(coord).getValue();
+        state.onChange(state.idToName.get(sheetId), coord, value);
+      } catch (err) {
+        console.warn('读取单元格失败', err);
+      }
+    });
   });
 }
 
@@ -155,12 +181,23 @@ const InvoiceGrid = {
   setCellValue(sheetName, a1, value) {
     const wb = state.univerAPI && state.univerAPI.getActiveWorkbook();
     if (!wb) return false;
-    const sheet = wb.getSheetBySheetId(state.nameToId.get(sheetName));
+    const sheetId = state.nameToId.get(sheetName);
+    const sheet = wb.getSheetBySheetId(sheetId);
     if (!sheet) return false;
+    const pos = parseA1(a1);
+    const key = pos ? `${sheetId}:${pos.row},${pos.col}` : '';
     try {
-      sheet.getRange(a1).setValue(value === '' ? null : value);
+      const range = sheet.getRange(a1);
+      if (key) state.suppress.add(key);
+      if (value === '' || value === null || value === undefined) {
+        if (typeof range.clearContent === 'function') range.clearContent();
+        else range.clear();
+      } else {
+        range.setValue(value);
+      }
       return true;
     } catch (e) {
+      if (key) state.suppress.delete(key);
       console.warn('写入单元格失败', e);
       return false;
     }
@@ -176,4 +213,5 @@ const InvoiceGrid = {
 };
 
 window.InvoiceGrid = InvoiceGrid;
+InvoiceGrid.internals = () => state;
 export default InvoiceGrid;

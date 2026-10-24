@@ -11,7 +11,6 @@
 <body class="{% block body_class %}{% endblock %}">
 
 <aside class="sidebar" id="sidebar">
-  {% set sc = sidebar_counts() %}
   <div class="sidebar-brand">
     <div class="logo">報</div>
     <div class="title">
@@ -23,25 +22,29 @@
   <nav class="sidebar-nav">
     {% if user and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
     <a class="side-link {% if request.url.path.startswith('/invoices') %}active{% endif %}" href="/invoices">
-      <span class="ico">▤</span> 发票列表
-      {% if sc.issue_count %}<span class="badge text-bg-danger ms-auto">{{ sc.issue_count }}</span>{% endif %}
-    </a>
+      <span class="ico">▤</span> 发票列表</a>
+    <a class="side-link {% if request.url.path.startswith('/shipments') %}active{% endif %}" href="/shipments">
+      <span class="ico">☰</span> 装柜列表</a>
+    <a class="side-link {% if request.url.path.startswith('/admin/upload') %}active{% endif %}" href="/admin/upload">
+      <span class="ico">↥</span> 数据导入</a>
     {% endif %}
     {% if user and user.role in [ROLE_TYPE2, ROLE_ADMIN] %}
     <a class="side-link {% if request.url.path.startswith('/details') %}active{% endif %}" href="/details">
-      <span class="ico">☰</span> 发票明细
-      {% if sc.pending_count %}<span class="badge text-bg-secondary ms-auto">{{ sc.pending_count }}</span>{% endif %}
-    </a>
+      <span class="ico">☰</span> 发票明细</a>
+    {% endif %}
+    {% if user %}
+    <a class="side-link {% if request.url.path.startswith('/files') %}active{% endif %}" href="/files">
+      <span class="ico">▣</span> 报关发票</a>
     {% endif %}
 
     {% if user and user.role == ROLE_ADMIN %}
     <div class="nav-section">管理</div>
     <a class="side-link {% if request.url.path == '/admin' %}active{% endif %}" href="/admin">
       <span class="ico">◧</span> 管理后台</a>
+    <a class="side-link {% if request.url.path.startswith('/admin/stats') %}active{% endif %}" href="/admin/stats">
+      <span class="ico">▥</span> 统计报表</a>
     <a class="side-link {% if request.url.path.startswith('/admin/users') %}active{% endif %}" href="/admin/users">
       <span class="ico">☺</span> 账号管理</a>
-    <a class="side-link {% if request.url.path.startswith('/admin/upload') %}active{% endif %}" href="/admin/upload">
-      <span class="ico">↥</span> 数据导入</a>
     <a class="side-link {% if request.url.path.startswith('/admin/exports') %}active{% endif %}" href="/admin/exports">
       <span class="ico">↓</span> 导出历史</a>
     <a class="side-link {% if request.url.path.startswith('/admin/audit') %}active{% endif %}" href="/admin/audit">
@@ -76,7 +79,13 @@
   </main>
 </div>
 
-<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+<script src="/static/vendor/bootstrap.bundle.min.js" defer></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el =>
+    new bootstrap.Tooltip(el, { html: true }));
+});
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

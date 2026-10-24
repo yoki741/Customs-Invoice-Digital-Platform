@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
-from openpyxl.styles import Alignment, Border, Side
+from openpyxl.styles import Alignment, PatternFill
 from openpyxl.workbook.workbook import Workbook
 
 from .config import TEMPLATE_DIR, TRANSPORT_TEMPLATES
@@ -40,6 +40,8 @@ class ManualFields:
     port_loading: str = ""
     container_info: str = ""
     flight_no: str = ""
+    # 单价手动覆盖：{面料类型(大写): 单价}，缺省时按单价表自动读取
+    unit_prices: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: Optional[dict[str, Any]]) -> "ManualFields":
@@ -53,6 +55,7 @@ class ManualFields:
             port_loading=str(raw.get("port_loading") or "").strip(),
             container_info=str(raw.get("container_info") or "").strip(),
             flight_no=str(raw.get("flight_no") or "").strip(),
+            unit_prices=parse_unit_prices(raw.get("unit_prices")),
         )
 
     def as_dict(self) -> dict[str, str]:
@@ -66,6 +69,32 @@ class ManualFields:
             "container_info": self.container_info,
             "flight_no": self.flight_no,
         }
+
+
+def parse_unit_prices(raw: Any) -> dict[str, float]:
+    """解析单价覆盖值（支持 JSON 字符串或 dict），返回 {大写面料类型: 单价}。"""
+    import json
+
+    data: Any = raw
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            data = {}
+    if not isinstance(data, dict):
+        return {}
+    prices: dict[str, float] = {}
+    for key, value in data.items():
+        key_text = str(key or "").strip().upper()
+        if not key_text:
+            continue
+        if value is None or str(value).strip() == "":
+            continue
+        try:
+            prices[key_text] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return prices
 
 
 @dataclass
@@ -127,6 +156,48 @@ def copy_sheet_with_format(src_wb: Workbook, src_name: str, dst_wb: Workbook, ds
             dst_ws.row_dimensions[row_num].height = dim.height
 
 
+TRACE_SHEET = "_PLATFORM_TRACE"
+
+
+def add_trace_sheet(workbook: Workbook, meta: dict[str, str]) -> None:
+    """往工作簿注入深度隐藏的追踪表（veryHidden，Excel 界面不可见）。
+
+    记录导出任务、导出人、时间、版本等，供文件回传时校验来源。
+    """
+    if TRACE_SHEET in workbook.sheetnames:
+        del workbook[TRACE_SHEET]
+    ws = workbook.create_sheet(TRACE_SHEET)
+    ws.sheet_state = "veryHidden"
+    ws["A1"] = "报关发票数字化平台-文件追踪信息（仅供追溯，请勿修改）"
+    row = 3
+    for key, value in meta.items():
+        ws[f"A{row}"] = str(key)
+        ws[f"B{row}"] = str(value)
+        row += 1
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 80
+
+
+def read_trace_sheet(file_path: Path) -> dict[str, str]:
+    """读取文件中的追踪表内容；无追踪表或读取失败返回空 dict。"""
+    try:
+        wb = openpyxl.load_workbook(str(file_path), read_only=True, keep_vba=False)
+    except Exception:
+        return {}
+    try:
+        if TRACE_SHEET not in wb.sheetnames:
+            return {}
+        ws = wb[TRACE_SHEET]
+        meta: dict[str, str] = {}
+        for row in ws.iter_rows(min_row=2, max_row=40, max_col=2):
+            key, value = row[0].value, row[1].value
+            if key and value:
+                meta[str(key).strip()] = str(value).strip()
+        return meta
+    finally:
+        wb.close()
+
+
 def inject_vba(xlsx_path: Path, carrier: Path, out_xlsm: Path) -> bool:
     """把源 .xlsm 的 VBA 工程注入 openpyxl 生成的 .xlsx，产出 .xlsm。
 
@@ -173,6 +244,66 @@ def inject_vba(xlsx_path: Path, carrier: Path, out_xlsm: Path) -> bool:
         return True
     except Exception:
         return False
+
+
+def enable_track_changes(file_path: Path) -> bool:
+    """用本机 Excel 开启共享工作簿的“修订跟踪”。
+
+    开启后，用户在本地 Excel 的修改会记录修改人、时间、单元格与旧值/新值，
+    可在「审阅 → 修订」中查看。Excel 未安装、文件被占用或自动化失败时返回 False。
+    """
+    path = Path(file_path)
+    temp_path = path.with_name(path.stem + "_tracktmp.xlsm")
+    try:
+        import win32com.client as win32  # type: ignore
+    except Exception:
+        return False
+
+    app = None
+    workbook = None
+    try:
+        if temp_path.exists():
+            temp_path.unlink()
+        app = win32.DispatchEx("Excel.Application")
+        app.Visible = False
+        app.DisplayAlerts = False
+        app.EnableEvents = False
+        try:
+            app.AutomationSecurity = 3
+        except Exception:
+            pass
+
+        workbook = app.Workbooks.Open(str(path))
+        workbook.TrackRevisions = True
+        try:
+            workbook.HighlightChangesOnScreen = True
+        except Exception:
+            pass
+        workbook.SaveAs(str(temp_path), FileFormat=52, AccessMode=2)
+        workbook.Close(SaveChanges=False)
+        workbook = None
+        app.Quit()
+        app = None
+        temp_path.replace(path)
+        return True
+    except Exception:
+        return False
+    finally:
+        if workbook is not None:
+            try:
+                workbook.Close(SaveChanges=False)
+            except Exception:
+                pass
+        if app is not None:
+            try:
+                app.Quit()
+            except Exception:
+                pass
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except Exception:
+            pass
 
 
 class Exporter:
@@ -346,15 +477,23 @@ class Exporter:
         if fields.ship_mode:
             ws_inv1["B17"] = fields.ship_mode
 
-        # 起运地（三种运输都写 A18，保留模板标签）
+        # 起运地（三种运输都写 A18，保留模板标签；值已含标签时直接写入避免重复）
         if fields.place_receipt:
             prefix, _ = _split_label(ws_inv1["A18"].value)
-            ws_inv1["A18"] = f"{prefix}{fields.place_receipt}"
+            value = fields.place_receipt.strip()
+            if prefix.strip() and value.lower().startswith(prefix.strip().lower()):
+                ws_inv1["A18"] = value
+            else:
+                ws_inv1["A18"] = f"{prefix}{value}"
 
         # 陆运：装货港写 A19；清掉模板残留的空格
         if transport == "陆运":
             if fields.port_loading:
-                ws_inv1["A19"] = f"Port of loading: {fields.port_loading}"
+                value = fields.port_loading.strip()
+                if value.lower().startswith("port of loading:"):
+                    ws_inv1["A19"] = value
+                else:
+                    ws_inv1["A19"] = f"Port of loading: {value}"
             if ws_inv1["F10"].value == " ":
                 ws_inv1["F10"] = None
 
@@ -399,26 +538,20 @@ class Exporter:
         sorted_ft = sorted(fabric_type_data.items(), key=lambda x: -x[1]["weight"])
 
         saved_merges = []
-        ref_unmerged_range = None
+        ref_merge_restore: Optional[str] = None
         for m in list(ws_inv1.merged_cells.ranges):
             if m.min_row >= 24 and m.max_row <= total_row - 1:
                 top_cell = ws_inv1.cell(row=m.min_row, column=m.min_col)
                 if top_cell.value and "REF:" in str(top_cell.value):
-                    ref_unmerged_range = (m.min_row, m.min_col, m.max_row, m.max_col)
+                    # 清掉模板 REF 内容但保留合并结构，与模板表格线一致
                     ws_inv1.unmerge_cells(str(m))
                     top_cell.value = None
+                    ref_merge_restore = str(m)
                     continue
                 saved_merges.append(
                     (str(m), m.min_row, m.min_col, m.max_row, m.max_col)
                 )
                 ws_inv1.unmerge_cells(str(m))
-
-        if ref_unmerged_range:
-            thin_side = Side(style="thin")
-            min_r, min_c, max_r, max_c = ref_unmerged_range
-            for r in range(min_r, max_r + 1):
-                ws_inv1.cell(row=r, column=min_c).border = Border(left=thin_side)
-                ws_inv1.cell(row=r, column=max_c).border = Border(right=thin_side)
 
         for r in range(23, total_row):
             for col in "ABCDEFGHIJK":
@@ -436,11 +569,18 @@ class Exporter:
 
         cur_row = 24
         total_amount = 0.0
+        price_fill = PatternFill(fill_type="solid", start_color="FFF2CC")
+        price_missing_fill = PatternFill(fill_type="solid", start_color="FFF8CBAD")
         for ft, fdata in sorted_ft:
             ft_weight = fdata["weight"]
             ft_descs = fdata["descriptions"]
             customs_w = int(ft_weight * ratio)
-            ft_price = lookup_price(self.prices, company_for_price, ft)
+            # 单价：优先使用手动填写的覆盖值，否则按单价表自动读取
+            override = fields.unit_prices.get(ft.strip().upper())
+            if override is not None:
+                ft_price = float(override)
+            else:
+                ft_price = lookup_price(self.prices, company_for_price, ft)
             ft_amount = round(ft_weight * ratio * ft_price, 2)
             total_amount += ft_amount
 
@@ -458,6 +598,14 @@ class Exporter:
                     dst.border = copy(src.border)
                     dst.fill = copy(src.fill)
                     dst.number_format = src.number_format
+            if ft_price == 0.0 and override is None:
+                ws_inv1[f"I{cur_row}"].fill = price_missing_fill
+                result.messages.append(
+                    f"面料 {ft.upper()} 未在单价表中找到单价，"
+                    f"请在 INV1 表 I{cur_row} 单元格（橙色底纹）手动填写单价"
+                )
+            else:
+                ws_inv1[f"I{cur_row}"].fill = price_fill
             cur_row += 1
 
             for desc in ft_descs:
@@ -477,6 +625,12 @@ class Exporter:
         for coord, *_ in saved_merges:
             try:
                 ws_inv1.merge_cells(coord)
+            except Exception:
+                pass
+        if ref_merge_restore:
+            # 恢复模板 REF 区域的合并结构（内容已清空），表格线按模板来
+            try:
+                ws_inv1.merge_cells(ref_merge_restore)
             except Exception:
                 pass
         ws_inv1[f"A{ref_row}"] = f"REF:{ref_value}"

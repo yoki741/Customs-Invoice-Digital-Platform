@@ -160,7 +160,10 @@ def read_source_file(file_path: str | Path) -> SourceData:
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        wb = openpyxl.load_workbook(str(path), data_only=True, keep_vba=False)
+        # read_only 模式解析更快（只需取值，不需要样式），编辑页打开提速
+        wb = openpyxl.load_workbook(
+            str(path), data_only=True, read_only=True, keep_vba=False
+        )
 
     try:
         if "InputTable" not in wb.sheetnames:

@@ -1,18 +1,21 @@
-# -*- coding: utf-8 -*-
-"""第二类账号：发票明细查看与核对。"""
+﻿# -*- coding: utf-8 -*-
+"""第二类账号：发票明细查看（只读）+ 明细导出。"""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime as _dt
+from io import BytesIO
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
-from ..auth import audit, require_csrf, require_type2
+from sqlalchemy.orm import Session, selectinload
+
+from ..auth import require_type2
 from ..models import (
     CHECK_FAILED,
-    CHECK_LABELS,
     CHECK_PASSED,
     CHECK_PENDING,
     Invoice,
@@ -20,9 +23,33 @@ from ..models import (
     User,
     get_db,
 )
+from ..service import (
+    attach_detail_extras,
+    export_bill_no,
+    export_container,
+    export_map_for,
+    get_exporter,
+    shipment_ref_map,
+)
 from ..templates_setup import templates
 
 router = APIRouter(tags=["details"])
+
+
+def _missing_prices_for_invoice(invoice: Invoice) -> list[str]:
+    """该发票明细中价格表查不到单价的面料类型。"""
+    from core.price_table import lookup_price
+
+    from ..service import company_for_price
+
+    prices = get_exporter().prices
+    company = company_for_price(invoice)
+    found: set[str] = set()
+    for item in invoice.items:
+        ft = (item.fabric_type or "").strip()
+        if ft and ft not in found and lookup_price(prices, company, ft) == 0.0:
+            found.add(ft)
+    return sorted(found)
 
 
 @router.get("/details")
@@ -42,10 +69,18 @@ async def detail_list(
     if inv_q.strip():
         like = f"%{inv_q.strip()}%"
         inv_query = inv_query.filter(
-            or_(Invoice.invoice_no.ilike(like), Invoice.delivery_to.ilike(like))
+            or_(
+                Invoice.invoice_no.ilike(like),
+                Invoice.delivery_to.ilike(like),
+                Invoice.bill_to.ilike(like),
+            )
         )
+    # 下拉只取必要字段，避免 selectin 连带加载每张发票的全部明细行
     invoices = (
-        inv_query.order_by(Invoice.uploaded_at.desc(), Invoice.id.desc())
+        inv_query.with_entities(
+            Invoice.id, Invoice.invoice_no, Invoice.delivery_to, Invoice.transport
+        )
+        .order_by(Invoice.uploaded_at.desc(), Invoice.id.desc())
         .limit(500)
         .all()
     )
@@ -54,22 +89,23 @@ async def detail_list(
     if inv_q.strip() and not invoice_id and len(invoices) == 1:
         invoice_id = invoices[0].id
 
-    counts = {
-        CHECK_PENDING: db.query(Invoice).filter(Invoice.check_status == CHECK_PENDING).count(),
-        CHECK_PASSED: db.query(Invoice).filter(Invoice.check_status == CHECK_PASSED).count(),
-        CHECK_FAILED: db.query(Invoice).filter(Invoice.check_status == CHECK_FAILED).count(),
-    }
+    # 是否处于"按发票筛选"状态：有搜索词或有核对状态筛选
+    search_active = bool(inv_q.strip()) or check_status in (
+        CHECK_PENDING,
+        CHECK_PASSED,
+        CHECK_FAILED,
+    )
+    matched_ids = [i.id for i in invoices]
 
     query = db.query(InvoiceItem)
     if invoice_id:
         query = query.filter(InvoiceItem.invoice_id == invoice_id)
-    elif check_status in (CHECK_PENDING, CHECK_PASSED, CHECK_FAILED):
-        # 按核对状态筛选时，明细表只显示这些发票的行
-        filtered_ids = [i.id for i in invoices]
-        if not filtered_ids:
+    elif search_active:
+        # 有搜索/筛选时，明细表只显示匹配发票的行（多张匹配则合并显示）
+        if not matched_ids:
             query = query.filter(InvoiceItem.invoice_id.is_(None))
         else:
-            query = query.filter(InvoiceItem.invoice_id.in_(filtered_ids))
+            query = query.filter(InvoiceItem.invoice_id.in_(matched_ids))
     if q.strip():
         like = f"%{q.strip()}%"
         query = query.filter(
@@ -85,16 +121,29 @@ async def detail_list(
     page = max(page, 1)
     size = 50
     rows = (
-        query.order_by(InvoiceItem.invoice_id.desc(), InvoiceItem.row.asc())
+        query.options(selectinload(InvoiceItem.invoice))
+        .order_by(InvoiceItem.invoice_id.desc(), InvoiceItem.row.asc())
         .offset((page - 1) * size)
         .limit(size)
         .all()
     )
     pages = max((total + size - 1) // size, 1)
 
-    current = next((i for i in invoices if i.id == invoice_id), None)
-    if current is None and invoice_id:
-        current = db.get(Invoice, invoice_id)
+    # 选中发票单独加载完整对象（含明细，供抬头与单价缺失提示）
+    current = db.get(Invoice, invoice_id) if invoice_id else None
+
+    ref_map = shipment_ref_map(db)
+    attach_detail_extras(rows, ref_map)
+    current_bill_no = (export_bill_no(current) or "-") if current else "-"
+    current_container = (export_container(current) or "-") if current else "-"
+    current_missing_prices = _missing_prices_for_invoice(current) if current else []
+
+    status_ids = list(matched_ids)
+    if invoice_id:
+        status_ids.append(invoice_id)
+    export_map = export_map_for(db, status_ids)
+    generated_ids = set(export_map)
+    current_export = export_map.get(invoice_id) if invoice_id else None
 
     return templates.TemplateResponse(
         request,
@@ -104,11 +153,17 @@ async def detail_list(
             "invoices": invoices,
             "current": current,
             "rows": rows,
+            "current_bill_no": current_bill_no,
+            "current_container": current_container,
+            "current_export": current_export,
+            "generated_ids": generated_ids,
+            "current_missing_prices": current_missing_prices,
             "invoice_id": invoice_id,
+            "invoice_match_count": len(invoices),
+            "search_active": search_active,
             "q": q,
             "inv_q": inv_q,
             "check_status": check_status,
-            "counts": counts,
             "page": page,
             "pages": pages,
             "total": total,
@@ -117,84 +172,129 @@ async def detail_list(
     )
 
 
-@router.post("/details/{invoice_id}/check")
-async def detail_check(
-    request: Request,
-    invoice_id: int,
-    status: str = Form(...),
-    note: str = Form(""),
+@router.get("/details/export")
+async def details_export(
+    invoice_id: int = 0,
+    q: str = "",
+    inv_q: str = "",
+    check_status: str = "",
     user: User = Depends(require_type2),
     db: Session = Depends(get_db),
-    _csrf: None = Depends(require_csrf),
 ) -> object:
-    if status not in (CHECK_PASSED, CHECK_FAILED):
-        request.session["flash"] = {
-            "level": "danger",
-            "message": "无效的核对状态",
-        }
-        return RedirectResponse(f"/details?invoice_id={invoice_id}", status_code=303)
-
-    invoice = db.get(Invoice, invoice_id)
-    if invoice is None:
-        request.session["flash"] = {"level": "warning", "message": "发票不存在"}
-        return RedirectResponse("/details", status_code=303)
-
-    note = note.strip()
-    if status == CHECK_FAILED and not note:
-        request.session["flash"] = {
-            "level": "warning",
-            "message": "标记问题时请填写问题说明，便于第一类账号修复",
-        }
-        return RedirectResponse(f"/details?invoice_id={invoice_id}", status_code=303)
-
-    invoice.check_status = status
-    invoice.check_note = note
-    invoice.checked_by = user.username
-    invoice.checked_at = datetime.utcnow()
-    db.commit()
-
-    audit(
-        db,
-        user,
-        "check",
-        f"{invoice.invoice_no} -> {CHECK_LABELS.get(status, status)}"
-        + (f" | {note}" if note else ""),
+    """导出发票明细为 Excel（无模板，按数据结构生成，与明细页口径一致）。"""
+    inv_query = db.query(Invoice)
+    if check_status in (CHECK_PENDING, CHECK_PASSED, CHECK_FAILED):
+        inv_query = inv_query.filter(Invoice.check_status == check_status)
+    if inv_q.strip():
+        like = f"%{inv_q.strip()}%"
+        inv_query = inv_query.filter(
+            or_(
+                Invoice.invoice_no.ilike(like),
+                Invoice.delivery_to.ilike(like),
+                Invoice.bill_to.ilike(like),
+            )
+        )
+    invoices = (
+        inv_query.with_entities(Invoice.id)
+        .order_by(Invoice.uploaded_at.desc(), Invoice.id.desc())
+        .limit(500)
+        .all()
     )
-    request.session["flash"] = {
-        "level": "success" if status == CHECK_PASSED else "warning",
-        "message": f"{invoice.invoice_no} 已标记为「{CHECK_LABELS.get(status, status)}」",
-    }
-    return RedirectResponse(f"/details?invoice_id={invoice_id}", status_code=303)
+    matched_ids = [i.id for i in invoices]
+    search_active = bool(inv_q.strip()) or check_status in (
+        CHECK_PENDING,
+        CHECK_PASSED,
+        CHECK_FAILED,
+    )
+
+    query = db.query(InvoiceItem)
+    if invoice_id:
+        query = query.filter(InvoiceItem.invoice_id == invoice_id)
+    elif search_active:
+        if not matched_ids:
+            query = query.filter(InvoiceItem.invoice_id.is_(None))
+        else:
+            query = query.filter(InvoiceItem.invoice_id.in_(matched_ids))
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            or_(
+                InvoiceItem.description.ilike(like),
+                InvoiceItem.fabric_type.ilike(like),
+                InvoiceItem.po_no.ilike(like),
+                InvoiceItem.colour.ilike(like),
+            )
+        )
+    rows = (
+        query.options(selectinload(InvoiceItem.invoice))
+        .order_by(InvoiceItem.invoice_id.desc(), InvoiceItem.row.asc())
+        .limit(20000)
+        .all()
+    )
+    ref_map = shipment_ref_map(db)
+    attach_detail_extras(rows, ref_map)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "发票明细"
+    headers = [
+        "Fabric Invoice No.", "ID", "柜号", "Invoice No.", "PO No.", "Description", "Colour",
+        "Size", "Fabric Type", "CARTON", "净重", "毛重", "Length",
+        "Quantity", "Unit Price", "Amount", "报关净重", "报关单价",
+        "报关金额", "备注",
+    ]
+    header_font = Font(bold=True)
+    orange_fill = PatternFill(fill_type="solid", start_color="F8CBAD")
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for it in rows:
+        inv = it.invoice
+        remark_parts = []
+        if not it.in_export:
+            remark_parts.append("* 不在导出范围(17-44行)")
+        if it.up == 0:
+            remark_parts.append("无单价（需在表格 I 列手动填写）")
+        ws.append([
+            inv.invoice_no if inv else None,
+            it.ref_id or None,
+            it.container_no,
+            it.export_bill_no,
+            it.po_no,
+            it.description,
+            it.colour,
+            it.size,
+            it.fabric_type,
+            it.carton,
+            it.net_weight,
+            it.gross_weight,
+            it.length,
+            it.quantity,
+            it.unit_price,
+            it.amount,
+            it.cw,
+            it.up,
+            it.ca,
+            "；".join(remark_parts),
+        ])
+        if it.up == 0:
+            ws.cell(row=ws.max_row, column=18).fill = orange_fill
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    widths = [14, 12, 16, 14, 14, 40, 12, 12, 14, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 30]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    wb.close()
+    name = f"invoice_details_{_dt.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
 
 
-@router.post("/details/batch-check")
-async def detail_batch_check(
-    request: Request,
-    ids: str = Form(""),
-    user: User = Depends(require_type2),
-    db: Session = Depends(get_db),
-    _csrf: None = Depends(require_csrf),
-) -> object:
-    """批量标记核对通过（问题发票仍需逐张填写说明）。"""
-    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
-    if not id_list:
-        request.session["flash"] = {"level": "warning", "message": "请先勾选要核对的发票"}
-        return RedirectResponse("/details", status_code=303)
-
-    rows = db.query(Invoice).filter(Invoice.id.in_(id_list)).all()
-    now = datetime.utcnow()
-    passed = 0
-    for invoice in rows:
-        invoice.check_status = CHECK_PASSED
-        invoice.check_note = ""
-        invoice.checked_by = user.username
-        invoice.checked_at = now
-        passed += 1
-    db.commit()
-
-    audit(db, user, "check.batch", f"批量核对通过 {passed} 张: {ids[:200]}")
-    request.session["flash"] = {
-        "level": "success",
-        "message": f"已批量标记 {passed} 张发票为「核对通过」",
-    }
-    return RedirectResponse("/details", status_code=303)

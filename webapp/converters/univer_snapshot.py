@@ -292,6 +292,21 @@ def workbook_to_snapshot(
             if target is None and 0 <= r < row_count and 0 <= c < col_count:
                 cell_data.setdefault(r, {})[c] = {"v": ""}
 
+        # 合并区域的边框：Univer 要求合并区最外圈的每个单元格都带同样的边框
+        # 样式（pro/issues/344），左上角的样式不会自动延伸到整个合并区。
+        # 因此把左上角样式复制到合并区内所有单元格（0 基索引）。
+        for (r, c), (min_r, min_c, max_r, max_c) in merged_top_left.items():
+            top_entry = cell_data.get(r, {}).get(c)
+            top_style = top_entry.get("s") if top_entry else None
+            if top_style is None:
+                continue
+            for rr in range(min_r - 1, max_r):
+                for cc in range(min_c - 1, max_c):
+                    if (rr, cc) == (r, c):
+                        continue
+                    if 0 <= rr < row_count and 0 <= cc < col_count:
+                        cell_data.setdefault(rr, {})[cc] = {"s": top_style}
+
         # 列宽 / 行高
         column_data: dict[int, dict[str, Any]] = {}
         for letter, dim in ws.column_dimensions.items():

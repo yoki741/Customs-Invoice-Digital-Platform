@@ -15,34 +15,55 @@
     min-height: 520px;
     position: relative;
   }
+  /* 宽屏下：页面滚轮只滚动左侧人工填写区，右侧 Excel 固定不动 */
+  @media (min-width: 1200px) {
+    .edit-col-left {
+      max-height: calc(100vh - 210px);
+      overflow-y: auto;
+      padding-right: 6px;
+      scrollbar-width: thin;
+    }
+    .edit-col-right {
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+    }
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="d-flex align-items-center gap-2 mb-2 no-print">
-  <a class="btn btn-sm btn-outline-secondary" href="/invoices">← 返回列表</a>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ back_link }}">← 返回列表</a>
   <span class="badge badge-info">{{ first.ship_mode or '-' }}</span>
   <span class="badge badge-role">{{ first.delivery_to or '-' }}</span>
   {% if invoices|length > 1 %}<span class="badge badge-ok">合并 {{ invoices|length }} 张</span>{% endif %}
 </div>
 
 <div class="row g-3">
-  <div class="col-12 col-xl-4 no-print">
+  <div class="col-12 col-xl-4 no-print edit-col-left">
     <div class="card">
       <div class="card-header py-2 fw-semibold">人工填写字段（EXE 中需要手动输入的信息）</div>
       <div class="card-body">
+        <div id="price-warning" class="alert alert-warning py-2 small mb-2 d-none"></div>
         <div id="form-fields" class="row g-2"></div>
         <div class="alert alert-info py-2 small mt-2 mb-0">
-          右侧 Excel 中黄色单元格即为需要填写的位置；填写后点击「生成 .xlsm」，
-          系统按模板生成报关发票 + 装箱单（含 VBA），与 EXE 输出一致。
+          右侧 Excel 中黄色单元格即为需要填写的位置；填写后可点「保存」按钮
+          或按 <b>Ctrl+S</b> 保存（下次打开自动回填）。点击「生成 .xlsm」时
+          也会同步保存，并按模板生成报关发票 + 装箱单（含 VBA），与 EXE 输出一致。
         </div>
       </div>
       <div class="card-footer d-flex gap-2">
+        <button class="btn btn-outline-primary" id="btn-save" onclick="saveManual()">
+          保存
+        </button>
         <button class="btn btn-success flex-grow-1" id="btn-export" onclick="doExport()">
           生成 .xlsm
         </button>
-        <button class="btn btn-outline-secondary" id="btn-preview"
-                onclick="downloadPreview()">下载预填 xlsx</button>
+      </div>
+      <div class="card-footer d-none" id="save-result">
+        <div class="small text-success" id="save-info"></div>
+        <div class="small text-danger mt-1" id="export-warnings"></div>
       </div>
     </div>
 
@@ -57,12 +78,17 @@
           <div class="col-12"><span class="text-muted">输出文件名</span><div id="m-file" class="text-break">-</div></div>
           <div class="col-12"><span class="text-muted">源文件</span>
             <div id="m-source" class="text-break text-muted">-</div></div>
+          <div class="col-12"><span class="text-muted">最近保存</span>
+            <div id="m-saved" class="text-break text-muted">-</div></div>
+          <div class="col-12"><span class="text-muted">单价（自动读取价格表，与表格 I 列一致）</span>
+            <span class="ico-q ms-1" id="price-help" style="cursor:help">i</span>
+            <div id="m-prices" class="small mt-1">-</div></div>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="col-12 col-xl-8">
+  <div class="col-12 col-xl-8 edit-col-right">
     <div class="card">
       <div class="card-header py-2 d-flex align-items-center gap-2">
         <span class="fw-semibold">Excel 预览</span>
@@ -84,15 +110,53 @@
 <script src="/static/vendor/univer.js"></script>
 <script>
 const IDS = {{ ids | tojson }};
+// 记住本次编辑的发票，发票列表页可一键继续编辑
+try {
+  localStorage.setItem('last_edit_ids', IDS);
+  localStorage.setItem('last_edit_nos', '{{ invoices | map(attribute="invoice_no") | join(",") }}');
+  localStorage.setItem('last_edit_back', '{{ back_link }}');
+} catch (e) { /* 忽略 */ }
 let META = null;
 let FIELDS = [];
 const cellToField = new Map();   // "SHEET!A1" -> {key, line}
 const inputs = new Map();        // key -> HTMLElement
+const ORIG = new Map();          // "SHEET!A1" -> 模板原值（与导出行为一致）
 
 function a1Of(row, col) {
   let n = col + 1, s = '';
   while (n > 0) { const r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); }
   return s + (row + 1);
+}
+
+function splitPrefix(text) {
+  const t = String(text ?? '');
+  const i = t.indexOf(':');
+  if (i < 0) return '';
+  return t.slice(0, i + 1) + (t[i + 1] === ' ' ? ' ' : '');
+}
+
+function stripPrefix(text) {
+  const t = String(text ?? '');
+  const i = t.indexOf(':');
+  return i < 0 ? t.trim() : t.slice(i + 1).trim();
+}
+
+function compose(field, value) {
+  const v = String(value ?? '').trim();
+  if (!v) {
+    if (field.multiline) return '';
+    const orig = ORIG.get(field.sheet + '!' + field.cell);
+    return orig === undefined || orig === null ? '' : orig;
+  }
+  // 编辑区与表格单元格完全一致显示（含标签文字）
+  return v;
+}
+
+function captureOrig() {
+  ORIG.clear();
+  FIELDS.filter(f => f.applicable && f.cell).forEach(f => {
+    ORIG.set(f.sheet + '!' + f.cell, InvoiceGrid.getCellValue(f.sheet, f.cell));
+  });
 }
 
 function buildForm(fields, meta) {
@@ -186,14 +250,15 @@ function applyDefaults(meta, first, stored) {
 }
 
 function onFormInput(field, el) {
-  if (field.cell) {
-    InvoiceGrid.setCellValue(field.sheet, field.cell, el.value);
-  } else if (field.multiline && META && META.container_row) {
+  if (field.multiline && META && META.container_row) {
     const lines = el.value.split('\n');
     for (let i = 0; i < 3; i++) {
       InvoiceGrid.setCellValue('INV1', 'A' + (META.container_row + 1 + i), (lines[i] || '').trim());
     }
+  } else if (field.cell) {
+    InvoiceGrid.setCellValue(field.sheet, field.cell, compose(field, el.value));
   }
+  scheduleDraft();
 }
 
 function syncAllToGrid() {
@@ -206,9 +271,29 @@ function syncAllToGrid() {
 function onGridChange(sheetName, coord, value) {
   const hit = cellToField.get(sheetName + '!' + coord);
   if (!hit) return;
+  if (hit.priceKey !== undefined) {
+    // 表格里直接改单价：同步到左侧单价输入框并更新金额
+    const priceInput = document.querySelector('.price-input[data-row="' + hit.row + '"]');
+    const text = (value === null || value === undefined) ? '' : String(value);
+    const price = parseFloat(text);
+    if (priceInput) priceInput.value = text;
+    const p = (META.prices || []).find(x => String(x.row) === String(hit.row));
+    if (p) {
+      p.price = isNaN(price) ? 0 : price;
+      p.amount = priceAmount(p, p.price);
+      p.missing = text.trim() === '';
+      p.overridden = text.trim() !== '';
+      updatePriceTooltip();
+    }
+    if (priceInput && p) {
+      InvoiceGrid.setCellValue('INV1', 'J' + hit.row, text.trim() === '' ? null : p.amount);
+    }
+    scheduleDraft();
+    return;
+  }
   const el = inputs.get(hit.key);
   if (!el) return;
-  const text = (value === null || value === undefined) ? '' : String(value);
+  let text = (value === null || value === undefined) ? '' : String(value);
   if (hit.line !== undefined) {
     const lines = el.value.split('\n');
     while (lines.length <= hit.line) lines.push('');
@@ -217,11 +302,22 @@ function onGridChange(sheetName, coord, value) {
   } else {
     el.value = text;
   }
+  scheduleDraft();
 }
 
 function collectForm() {
   const form = {};
   inputs.forEach((el, key) => { form[key] = el.value.trim(); });
+  // 单价手动覆盖（只在填了值时提交）
+  const prices = {};
+  document.querySelectorAll('.price-input').forEach(el => {
+    const v = el.value.trim();
+    if (v !== '') {
+      const num = parseFloat(v);
+      if (!isNaN(num)) prices[el.dataset.key] = num;
+    }
+  });
+  form.unit_prices = JSON.stringify(prices);
   return form;
 }
 
@@ -229,6 +325,155 @@ function setStatus(text, cls) {
   const el = document.getElementById('status');
   el.textContent = text || '';
   el.className = 'ms-auto small ' + (cls || 'text-muted');
+}
+
+// ---- 单价：自动读取 + 手动填写 ----
+function priceAmount(p, price) {
+  // 与导出公式一致：金额 = 净重 × 比例 × 单价（保留两位）
+  const weight = Number(p.weight || 0);
+  const ratio = Number(p.ratio || 0.94);
+  return Math.round(weight * ratio * price * 100) / 100;
+}
+
+function onPriceInput(e) {
+  const el = e.target;
+  const row = el.dataset.row;
+  const text = el.value.trim();
+  const price = text === '' ? 0 : parseFloat(text);
+  if (text !== '' && (isNaN(price) || price < 0)) return;
+  const p = (META.prices || []).find(x => String(x.row) === String(row));
+  if (!p) return;
+  p.price = price;
+  p.amount = priceAmount(p, price);
+  p.missing = text === '';
+  p.overridden = text !== '';
+  InvoiceGrid.setCellValue('INV1', 'I' + row, text === '' ? null : price);
+  InvoiceGrid.setCellValue('INV1', 'J' + row, text === '' ? null : p.amount);
+  const rowBox = el.parentElement;
+  if (rowBox) {
+    const tag = rowBox.querySelector('span.small');
+    if (tag) {
+      tag.className = 'small ' + (text === '' ? 'text-warning fw-semibold' : 'text-muted');
+      tag.textContent = text === '' ? '无单价' : (p.overridden ? '已手动修改' : '自动');
+    }
+  }
+  updatePriceTooltip();
+  scheduleDraft();
+}
+
+function updatePriceTooltip() {
+  const priceHelp = document.getElementById('price-help');
+  if (!priceHelp) return;
+  const lines = (META.prices || []).map(p => {
+    if (p.missing) {
+      return '<b>' + p.fabric_type + '</b>：无单价（请在左侧填写或表格 I 列填写）';
+    }
+    const src = p.overridden ? '手动填写' : '单价表';
+    return '<b>' + p.fabric_type + '</b><br>' +
+           '净重 ' + p.weight + ' KGS × ' + p.ratio_pct +
+           ' = 报关净重 <b>' + p.customs_weight + '</b> KGS<br>' +
+           '单价 $' + p.price + '（' + src + '） → 金额 <b>$' + p.amount + '</b>';
+  });
+  priceHelp.title = '表格中各值对应的金额：<br><br>' + lines.join('<br><br>');
+  const inst = bootstrap.Tooltip.getInstance(priceHelp);
+  if (inst) inst.setContent({ '.tooltip-inner': priceHelp.title });
+}
+
+function applyUnitPrices(raw) {
+  let data = raw;
+  if (typeof raw === 'string') {
+    try { data = JSON.parse(raw || '{}'); } catch (e) { data = {}; }
+  }
+  if (!data || typeof data !== 'object') return;
+  document.querySelectorAll('.price-input').forEach(el => {
+    const v = data[el.dataset.key];
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      el.value = String(v);
+      el.dispatchEvent(new Event('input'));
+    }
+  });
+}
+
+async function saveManual(force) {
+  const form = collectForm();
+  setStatus('保存中...');
+  try {
+    const res = await fetch('/api/invoices/manual-save?ids=' + encodeURIComponent(IDS), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ form, last_saved_at: (META && META.last_saved_at) || '', force: !!force }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setStatus(data.error || '保存失败', 'text-danger');
+      return;
+    }
+    if (data.conflict) {
+      const ok2 = confirm(
+        '注意：' + data.saved_by + ' 已于 ' + data.saved_at + ' 保存过此发票，\n' +
+        '你当前页面可能不是最新版本。\n\n' +
+        '点「确定」用当前内容覆盖保存（会覆盖他人改动）；\n' +
+        '点「取消」放弃保存，刷新页面查看最新内容。');
+      if (ok2) {
+        await saveManual(true);
+        return;
+      }
+      setStatus('未保存（他人已有更新的版本）', 'text-warning');
+      return;
+    }
+    META.last_saved_at = data.saved_at || META.last_saved_at;
+    setStatus('已保存（可随时按 Ctrl+S 保存）', 'text-success');
+  } catch (err) {
+    setStatus('保存异常: ' + err, 'text-danger');
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
+    e.preventDefault();
+    e.stopPropagation();
+    saveManual();
+  }
+}, true);
+
+// ---- 离开页面草稿：跳转到其他菜单再回来时恢复未保存的编辑内容 ----
+function draftKey() { return 'edit_draft_' + IDS; }
+
+let draftTimer = null;
+function scheduleDraft() {
+  if (draftTimer) clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(draftKey(), JSON.stringify({ form: collectForm(), t: Date.now() }));
+    } catch (e) { /* 忽略 */ }
+  }, 800);
+}
+
+function restoreDraft() {
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch (e) {}
+  if (!draft || !draft.form) return;
+  let restored = 0;
+  Object.keys(draft.form).forEach(key => {
+    if (key === 'unit_prices') return;
+    const el = inputs.get(key);
+    if (el && draft.form[key] != null && String(draft.form[key]).trim() !== '') {
+      el.value = String(draft.form[key]);
+      restored++;
+    }
+  });
+  if (restored) {
+    syncAllToGrid();
+    setStatus('已恢复离开前未保存的编辑内容', 'text-info');
+  }
+  if (draft.form.unit_prices) {
+    applyUnitPrices(draft.form.unit_prices);
+    setStatus('已恢复离开前未保存的编辑内容（含单价修改）', 'text-info');
+  }
+}
+
+function clearDraft() {
+  try { localStorage.removeItem(draftKey()); } catch (e) {}
 }
 
 async function loadSnapshot() {
@@ -242,18 +487,74 @@ async function loadSnapshot() {
   }
   META = data.meta;
   FIELDS = data.fields;
+  const priceWarn = document.getElementById('price-warning');
+  if (META.missing_prices && META.missing_prices.length) {
+    priceWarn.innerHTML = '以下面料类型<b>未在单价表中找到单价</b>：' +
+      META.missing_prices.join('、') +
+      '。<br>请导出后在 Excel 的 <b>I 列（橙色底纹单元格）</b>手动填写单价并核对金额。';
+    priceWarn.classList.remove('d-none');
+  } else {
+    priceWarn.classList.add('d-none');
+  }
   document.getElementById('m-transport').textContent = META.transport || '-';
   document.getElementById('m-company').textContent = META.company || '-';
   document.getElementById('m-weight').textContent = META.customs_weight + ' KGS';
   document.getElementById('m-amount').textContent = '$' + Number(META.total_amount || 0).toLocaleString();
   document.getElementById('m-file').textContent = META.file_stem + '.xlsm';
   document.getElementById('m-source').textContent = META.source_filename || '-';
+  document.getElementById('m-saved').textContent = META.last_saved_by
+    ? (META.last_saved_by + ' · ' + (META.last_saved_at || '')) : '尚未保存';
+  const priceBox = document.getElementById('m-prices');
+  const priceHelp = document.getElementById('price-help');
+  if (META.prices && META.prices.length) {
+    priceBox.innerHTML = META.prices.map(p => {
+      const auto = p.auto_price ? String(p.auto_price) : '';
+      const val = p.missing ? '' : String(p.price);
+      const hint = p.auto_price ? ('单价表 ' + p.auto_price) : '单价表无此面料';
+      const tag = p.missing
+        ? '<span class="small text-warning fw-semibold">无单价</span>'
+        : '<span class="small text-muted" title="' + hint + '">' +
+          (p.overridden ? '已手动修改' : '自动') + '</span>';
+      return '<div class="d-flex align-items-center gap-2 mb-1">' +
+        '<span class="text-truncate" style="max-width:120px" title="' + p.fabric_type + '">' +
+        p.fabric_type + '</span>' +
+        '<input type="number" step="0.01" min="0" class="form-control form-control-sm price-input" ' +
+        'style="width:100px" data-key="' + p.key + '" data-row="' + p.row + '" ' +
+        'data-cw="' + p.customs_weight + '" value="' + val + '" placeholder="' + auto + '">' +
+        tag + '</div>';
+    }).join('');
+    priceBox.querySelectorAll('.price-input').forEach(el => {
+      el.addEventListener('input', onPriceInput);
+    });
+    updatePriceTooltip();
+    if (!bootstrap.Tooltip.getInstance(priceHelp)) {
+      new bootstrap.Tooltip(priceHelp, { html: true, placement: 'right' });
+    }
+  } else {
+    priceBox.textContent = '-';
+  }
 
   buildForm(FIELDS, META);
+  InvoiceGrid.load('grid', data.snapshot, data.editable, onGridChange);
+  // 表格 I 列（单价）与左侧单价输入框联动
+  (META.prices || []).forEach(p => {
+    cellToField.set('INV1!I' + p.row, { priceKey: p.key, row: p.row, cw: p.customs_weight });
+  });
+  captureOrig();
   applyDefaults(META, {{ {'invoice_no': first.invoice_no, 'ship_mode': first.ship_mode,
                           'vessel_flight': first.vessel_flight} | tojson }},
                 data.manual || {});
-  InvoiceGrid.load('grid', data.snapshot, data.editable, onGridChange);
+  // 起运地/装货港/陆运口岸：编辑区初始值取表格单元格原文，保证两边一模一样
+  ['place_receipt', 'port_loading'].forEach(key => {
+    const f = FIELDS.find(x => x.key === key);
+    if (f && f.applicable && f.cell && inputs.has(key)) {
+      const cur = InvoiceGrid.getCellValue(f.sheet, f.cell);
+      if (cur !== null && cur !== undefined && String(cur).trim()) {
+        inputs.get(key).value = String(cur);
+      }
+    }
+  });
+  restoreDraft();
   setStatus('已就绪');
 }
 
@@ -281,18 +582,36 @@ async function doExport() {
       alert(data.error || '导出失败');
       return;
     }
-    setStatus('已生成：' + data.filename + '（' + data.customs_weight + 'KGS / $' +
-      Number(data.total_amount).toLocaleString() + '）', 'text-success');
-    window.location.href = data.download;
+    setStatus('已生成并保存：' + data.filename, 'text-success');
+    if (data.saved_at) META.last_saved_at = data.saved_at;
+    clearDraft();
+    const box = document.getElementById('save-result');
+    box.classList.remove('d-none');
+    document.getElementById('save-info').innerHTML =
+      '已生成并保存：' + data.folder + '/' + data.filename + '（第 ' + data.version + ' 次生成）' +
+      ' <a href="' + data.download + '" class="ms-1">下载此文件</a>' +
+      ' <a href="/files" class="ms-1">查看报关发票</a>' +
+      (data.list_download
+        ? '<br>装柜列表已更新：' + data.list_filename +
+          ' <a href="' + data.list_download + '" class="ms-1">下载列表</a>' +
+          ' <a href="' + (data.list_url || '/shipments') + '" class="ms-1">查看装柜列表</a>'
+        : '') +
+      (data.track_changes
+        ? '<br><span class="text-muted">已开启本地修订记录：Excel「审阅 → 修订」可查看后续修改。</span>'
+        : '');
+    const warns = document.getElementById('export-warnings');
+    const warnMsgs = Array.isArray(data.messages)
+      ? data.messages.filter(m => String(m).indexOf('未在单价表') >= 0) : [];
+    if (warnMsgs.length) {
+      warns.innerHTML = warnMsgs.map(m => '⚠ ' + m).join('<br>');
+    } else {
+      warns.innerHTML = '';
+    }
   } catch (err) {
     setStatus('导出异常: ' + err, 'text-danger');
   } finally {
     btn.disabled = false;
   }
-}
-
-function downloadPreview() {
-  window.open('/api/invoices/preview.xlsx?ids=' + encodeURIComponent(IDS), '_blank');
 }
 
 loadSnapshot();

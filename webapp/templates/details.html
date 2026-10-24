@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% block title %}发票明细 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
 {% block heading %}发票明细{% endblock %}
-{% block crumb %}共 {{ total }} 条明细{% endblock %}
+{% block crumb %}共 {{ total }} 条明细
+<span class="ico-q ms-1" data-bs-toggle="tooltip" data-bs-placement="bottom"
+      data-bs-html="true"
+      title="输入发票号或客户名搜索后，下方明细表会同步只显示匹配发票的明细行。<br>也可在「选择发票」下拉选中一张发票查看其抬头、提单号和全部明细。<br>不搜索不选择时，默认显示全部发票的明细。">?</span>
+{% endblock %}
 {% block content %}
 
 {% if flash %}
@@ -22,25 +26,19 @@
       <div class="col-12 col-md-3">
         <label class="form-label">选择发票</label>
         <select class="form-select form-select-sm" name="invoice_id" onchange="this.form.submit()">
-          <option value="0">全部发票（先选一张才能核对）</option>
+          <option value="0">全部发票</option>
           {% for i in invoices %}
           <option value="{{ i.id }}" {% if invoice_id == i.id %}selected{% endif %}>
-            [{{ CHECK_LABELS.get(i.check_status, i.check_status) }}] {{ i.invoice_no }} · {{ i.delivery_to or '-' }} · {{ i.transport or '-' }}
+            {{ i.invoice_no }} · {{ i.delivery_to or '-' }} · {{ i.transport or '-' }}{% if i.id in generated_ids %} · 已生成{% endif %}
           </option>
           {% endfor %}
         </select>
+        {% if invoices|length >= 500 %}
+        <div class="form-text text-warning">匹配发票超过 500 张，仅显示最近 500 张，请用搜索缩小范围</div>
+        {% endif %}
         {% if inv_q and not invoices %}
         <div class="form-text text-warning">没有匹配「{{ inv_q }}」的发票，请检查发票号或客户名</div>
         {% endif %}
-      </div>
-      <div class="col-12 col-md-2">
-        <label class="form-label">核对状态</label>
-        <select class="form-select form-select-sm" name="check_status" onchange="this.form.submit()">
-          <option value="">全部（{{ counts[CHECK_PENDING] + counts[CHECK_PASSED] + counts[CHECK_FAILED] }}）</option>
-          <option value="{{ CHECK_PENDING }}" {% if check_status == CHECK_PENDING %}selected{% endif %}>待核对（{{ counts[CHECK_PENDING] }}）</option>
-          <option value="{{ CHECK_FAILED }}" {% if check_status == CHECK_FAILED %}selected{% endif %}>有问题（{{ counts[CHECK_FAILED] }}）</option>
-          <option value="{{ CHECK_PASSED }}" {% if check_status == CHECK_PASSED %}selected{% endif %}>核对通过（{{ counts[CHECK_PASSED] }}）</option>
-        </select>
       </div>
       <div class="col-12 col-md-3">
         <label class="form-label">搜索明细</label>
@@ -49,73 +47,46 @@
       </div>
       <div class="col-auto">
         <button class="btn btn-primary btn-sm">查询</button>
+        <a class="btn btn-outline-secondary btn-sm" href="/details"
+           title="清空全部查询条件，返回全部发票明细">清空</a>
+      </div>
+      <div class="col-auto ms-auto">
+        <a class="btn btn-outline-success btn-sm"
+           href="/details/export?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&check_status={{ check_status }}"
+           title="按当前筛选条件导出全部明细行（最多2万行），含报关净重/单价/金额">导出 Excel</a>
       </div>
     </form>
   </div>
 </div>
 
-{% if not current %}
-<div class="alert alert-info py-2 mt-3 d-flex align-items-center gap-2">
-  <span>从上方「搜索发票」输入发票号或客户名，或在「选择发票」下拉选中一张发票后，
-  即可在下方看到<b>核对状态</b>和
-  <span class="badge text-bg-success">核对通过</span> /
-  <span class="badge text-bg-danger">标记问题</span> 按钮。</span>
+{% if search_active and not current and invoice_match_count > 1 %}
+<div class="alert alert-secondary py-2 mt-2 mb-0">
+  当前按搜索/筛选匹配到 <b>{{ invoice_match_count }}</b> 张发票，下方明细表显示这 {{ invoice_match_count }} 张发票的明细（合并列表）。
 </div>
-
-{% if user and user.role in [ROLE_TYPE2, ROLE_ADMIN] and invoices %}
-<div class="card mt-3 no-print">
-  <div class="card-header py-2 d-flex align-items-center gap-2">
-    <span class="fw-semibold">批量核对</span>
-    <span class="small text-muted">勾选多张发票一键标记通过；有问题的发票请逐张填写说明</span>
-  </div>
-  <div class="card-body p-0">
-    <form method="post" action="/details/batch-check" id="batch-form">
-      <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
-      <input type="hidden" name="ids" id="batch-ids" value="">
-      <table class="table table-sm table-hover mb-0">
-        <thead>
-          <tr>
-            <th style="width:34px"><input type="checkbox" class="form-check-input"
-                  onclick="toggleBatchAll(this)"></th>
-            <th>Invoice No.</th>
-            <th>Delivery to</th>
-            <th>运输</th>
-            <th>核对状态</th>
-            <th>问题说明</th>
-            <th>导入时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for i in invoices %}
-          <tr>
-            <td><input type="checkbox" class="form-check-input batch-check" value="{{ i.id }}"></td>
-            <td class="fw-semibold">{{ i.invoice_no or '-' }}</td>
-            <td class="small">{{ i.delivery_to or '-' }}</td>
-            <td>{% if i.transport %}<span class="badge badge-transport-{{ i.transport }}">{{ i.transport }}</span>{% endif %}</td>
-            <td><span class="badge text-bg-{{ CHECK_STYLES.get(i.check_status, 'secondary') }}">
-              {{ CHECK_LABELS.get(i.check_status, i.check_status) }}</span></td>
-            <td class="small">{{ i.check_note or '-' }}</td>
-            <td class="small text-muted">{{ i.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <div class="card-footer d-flex align-items-center gap-2">
-        <button class="btn btn-sm btn-success" type="submit"
-                onclick="return submitBatch()">批量标记通过</button>
-        <span class="small text-muted">已勾选 <span id="batch-count">0</span> 张</span>
-      </div>
-    </form>
-  </div>
-</div>
-{% endif %}
 {% endif %}
 
 {% if current %}
+{% if current_missing_prices %}
+<div class="alert alert-warning py-2 mt-3 mb-0">
+  以下面料类型未在单价表中找到单价：<b>{{ current_missing_prices | join('、') }}</b>。
+  导出的报关表中对应单价单元格为橙色底纹（金额按 0 计），需在 Excel 中手动补填。
+</div>
+{% endif %}
 <div class="card mt-3">
   <div class="card-body py-2">
     <div class="row row-cols-auto g-3 small">
-      <div class="col"><span class="text-muted">Invoice No.:</span> <b>{{ current.invoice_no }}</b></div>
+      <div class="col"><span class="text-muted">Fabric Invoice No.:</span> <b>{{ current.invoice_no }}</b></div>
+      <div class="col"><span class="text-muted">Invoice No.:</span> <b>{{ current_bill_no }}</b></div>
+      <div class="col"><span class="text-muted">柜号:</span> <b>{{ current_container }}</b></div>
+      <div class="col">
+        <span class="text-muted">生成状态:</span>
+        {% if current_export %}
+        <span class="badge bg-success">已生成</span>
+        <span class="small text-muted">v{{ current_export.version }} · {{ current_export.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        {% else %}
+        <span class="badge bg-secondary">未生成</span>
+        {% endif %}
+      </div>
       <div class="col"><span class="text-muted">日期:</span> {{ current.invoice_date or '-' }}</div>
       <div class="col"><span class="text-muted">Ship Mode:</span> {{ current.ship_mode or '-' }}</div>
       <div class="col"><span class="text-muted">运输:</span> {% if current.transport %}<span class="badge badge-transport-{{ current.transport }}">{{ current.transport }}</span>{% endif %}</div>
@@ -129,36 +100,6 @@
     </div>
   </div>
 </div>
-
-<div class="card mt-3 no-print">
-  <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
-    <span class="text-muted small">核对状态：</span>
-    <span class="badge text-bg-{{ CHECK_STYLES.get(current.check_status, 'secondary') }}">
-      {{ CHECK_LABELS.get(current.check_status, current.check_status) }}
-    </span>
-    {% if current.checked_by %}
-    <span class="small text-muted">{{ current.checked_by }} · {{ current.checked_at.strftime('%Y-%m-%d %H:%M') if current.checked_at else '' }}</span>
-    {% endif %}
-
-    {% if user and user.role in [ROLE_TYPE2, ROLE_ADMIN] %}
-    <form class="d-flex flex-wrap align-items-center gap-2 ms-auto" method="post" action="/details/{{ current.id }}/check">
-      <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
-      <input type="text" class="form-control form-control-sm" style="width:22rem;max-width:100%"
-             name="note" value="{{ current.check_note or '' }}"
-             placeholder="问题说明（标记问题时必填）">
-      <button class="btn btn-sm btn-success" name="status" value="{{ CHECK_PASSED }}">核对通过</button>
-      <button class="btn btn-sm btn-danger" name="status" value="{{ CHECK_FAILED }}"
-              onclick="return needNote(this)">标记问题</button>
-    </form>
-    {% endif %}
-
-    {% if current.check_note %}
-    <div class="w-100 small mt-1">
-      <span class="text-muted">问题说明：</span>{{ current.check_note }}
-    </div>
-    {% endif %}
-  </div>
-</div>
 {% endif %}
 
 <div class="card mt-3">
@@ -167,6 +108,9 @@
       <table class="table table-striped table-sm mb-0">
         <thead>
           <tr>
+            <th>Fabric Invoice No.</th>
+            <th>ID</th>
+            <th>柜号</th>
             <th>Invoice No.</th>
             <th>PO No.</th>
             <th>Description</th>
@@ -180,12 +124,18 @@
             <th class="num">Quantity</th>
             <th class="num">Unit Price</th>
             <th class="num">Amount</th>
+            <th class="num" title="净重 × 运输比例（海94% / 空95% / 陆94%），* 表示不在导出范围(17-44行)">报关净重</th>
+            <th class="num" title="导出报关表 I 列单价（按面料类型查价格表），* 表示不在导出范围">报关单价</th>
+            <th class="num" title="报关净重 × 报关单价，* 表示不在导出范围">报关金额</th>
           </tr>
         </thead>
         <tbody>
           {% for it in rows %}
           <tr>
             <td class="small">{{ it.invoice.invoice_no if it.invoice else '-' }}</td>
+            <td class="small fw-semibold">{{ it.ref_id or '-' }}</td>
+            <td class="small">{{ it.container_no or '-' }}</td>
+            <td class="small fw-semibold">{{ it.export_bill_no or '-' }}</td>
             <td class="small">{{ it.po_no or '-' }}</td>
             <td class="small wrap">{{ it.description or '-' }}</td>
             <td class="small">{{ it.colour or '-' }}</td>
@@ -198,9 +148,17 @@
             <td class="num">{{ '%.2f' % it.quantity if it.quantity else '-' }}</td>
             <td class="num">{{ '%.4g' % it.unit_price if it.unit_price else '-' }}</td>
             <td class="num">{{ '%.2f' % it.amount if it.amount else '-' }}</td>
+            <td class="num" {% if not it.in_export %}title="不在导出范围(17-44行)"{% endif %}>
+              {{ '%.3f' % it.cw if it.cw else '-' }}{% if not it.in_export %}*{% endif %}
+            </td>
+            <td class="num {% if it.up == 0 %}text-warning fw-semibold{% endif %}"
+                {% if it.up == 0 %}title="价格表中未找到该面料的单价，需在导出后手动填写"{% endif %}>
+              {% if it.up is none %}-{% else %}{{ '%.4g' % it.up }}{% if it.up == 0 %}（无单价）{% endif %}{% endif %}{% if not it.in_export %}*{% endif %}
+            </td>
+            <td class="num">{{ '%.2f' % it.ca if it.ca else '-' }}{% if not it.in_export %}*{% endif %}</td>
           </tr>
           {% else %}
-          <tr><td colspan="13" class="text-center text-muted py-4">暂无明细数据</td></tr>
+          <tr><td colspan="18" class="text-center text-muted py-4">暂无明细数据</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -210,10 +168,10 @@
     <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
     <div>
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&check_status={{ check_status }}&page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&page={{ page - 1 }}">上一页</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&check_status={{ check_status }}&page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&page={{ page + 1 }}">下一页</a>
       {% endif %}
     </div>
   </div>
@@ -221,40 +179,4 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-function needNote(btn) {
-  const note = btn.form.querySelector('input[name="note"]');
-  if (!note.value.trim()) {
-    alert('标记问题时请填写问题说明，便于第一类账号修复');
-    note.focus();
-    return false;
-  }
-  return true;
-}
-
-function toggleBatchAll(box) {
-  document.querySelectorAll('.batch-check').forEach(c => { c.checked = box.checked; });
-  updateBatchCount();
-}
-
-function updateBatchCount() {
-  const n = document.querySelectorAll('.batch-check:checked').length;
-  const el = document.getElementById('batch-count');
-  if (el) el.textContent = n;
-}
-
-function submitBatch() {
-  const checked = [...document.querySelectorAll('.batch-check:checked')];
-  if (!checked.length) {
-    alert('请先勾选要核对通过的发票');
-    return false;
-  }
-  document.getElementById('batch-ids').value = checked.map(c => c.value).join(',');
-  return true;
-}
-
-document.addEventListener('change', (e) => {
-  if (e.target.classList && e.target.classList.contains('batch-check')) updateBatchCount();
-});
-</script>
 {% endblock %}

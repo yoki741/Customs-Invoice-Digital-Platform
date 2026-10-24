@@ -4,6 +4,12 @@
 {% block crumb %}共 {{ total }} 条{% endblock %}
 {% block content %}
 
+<div id="continue-banner" class="alert alert-info py-2 d-flex align-items-center gap-2 d-none">
+  <span class="small">上次编辑的发票：<b id="last-edit-nos"></b></span>
+  <a class="btn btn-sm btn-primary" id="continue-link" href="#">继续编辑</a>
+  <button type="button" class="btn-close ms-auto" onclick="dismissContinue()" title="不再显示"></button>
+</div>
+
 {% if flash %}
 <div class="alert alert-{{ flash.level }} alert-dismissible py-2">
   {{ flash.message }}
@@ -38,15 +44,6 @@
         </select>
       </div>
       <div class="col-6 col-md-2">
-        <label class="form-label">核对状态</label>
-        <select class="form-select form-select-sm" name="check_status">
-          <option value="">全部</option>
-          <option value="{{ CHECK_FAILED }}" {% if check_status == CHECK_FAILED %}selected{% endif %}>有问题（{{ counts[CHECK_FAILED] }}）</option>
-          <option value="{{ CHECK_PENDING }}" {% if check_status == CHECK_PENDING %}selected{% endif %}>待核对（{{ counts[CHECK_PENDING] }}）</option>
-          <option value="{{ CHECK_PASSED }}" {% if check_status == CHECK_PASSED %}selected{% endif %}>核对通过（{{ counts[CHECK_PASSED] }}）</option>
-        </select>
-      </div>
-      <div class="col-6 col-md-2">
         <label class="form-label">导入日期 从</label>
         <input type="date" class="form-control form-control-sm" name="date_from" value="{{ date_from }}">
       </div>
@@ -56,6 +53,8 @@
       </div>
       <div class="col-auto">
         <button class="btn btn-primary btn-sm">筛选</button>
+        <a class="btn btn-outline-secondary btn-sm" href="/invoices"
+           title="清空全部筛选条件">清空</a>
       </div>
       <div class="col-auto ms-auto">
         <button type="button" class="btn btn-success btn-sm" onclick="openSelected()">合并编辑 / 导出</button>
@@ -79,7 +78,6 @@
             <th>公司</th>
             <th>Delivery to</th>
             <th>供应商</th>
-            <th>核对</th>
             <th class="num">件数</th>
             <th class="num">净重</th>
             <th class="num">毛重</th>
@@ -94,7 +92,6 @@
           <tr>
             <td><input type="checkbox" class="form-check-input row-check" value="{{ r.id }}"
                       data-delivery="{{ r.delivery_to or '' }}"
-                      data-check-status="{{ r.check_status }}"
                       data-invoice-no="{{ r.invoice_no or '-' }}"></td>
             <td class="fw-semibold">{{ r.invoice_no or '-' }}</td>
             <td>{{ r.invoice_date or '-' }}</td>
@@ -103,14 +100,6 @@
             <td>{{ r.company or '-' }}</td>
             <td class="small">{{ r.delivery_to or '-' }}</td>
             <td class="small">{{ r.supplier_code or '-' }}</td>
-            <td>
-              <span class="badge text-bg-{{ CHECK_STYLES.get(r.check_status, 'secondary') }}"
-                    title="{{ r.check_note or '' }}">{{ CHECK_LABELS.get(r.check_status, r.check_status) }}</span>
-              {% if r.check_status == CHECK_FAILED and r.check_note %}
-              <div class="small text-danger text-truncate" style="max-width:180px"
-                   title="{{ r.check_note }}">{{ r.check_note }}</div>
-              {% endif %}
-            </td>
             <td class="num">{{ '%g' % r.rolls if r.rolls else '-' }}</td>
             <td class="num">{{ '%.2f' % r.net_weight if r.net_weight else '-' }}</td>
             <td class="num">{{ '%.2f' % r.gross_weight if r.gross_weight else '-' }}</td>
@@ -119,10 +108,18 @@
             <td class="small text-muted">{{ r.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
             <td class="text-end">
               <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.id }}">编辑 / 导出</a>
+              {% if user and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
+              <form method="post" action="/admin/invoices/{{ r.id }}/delete" class="d-inline"
+                    onsubmit="return confirm('确定删除发票 {{ r.invoice_no or r.id }}？\n明细一并删除，源文件保留。此操作不可恢复。')">
+                <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
+                <input type="hidden" name="back" value="/invoices?q={{ q }}&transport={{ transport }}&company={{ company }}&date_from={{ date_from }}&date_to={{ date_to }}">
+                <button class="btn btn-sm btn-outline-danger py-0">删除</button>
+              </form>
+              {% endif %}
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="16" class="text-center text-muted py-4">
+          <tr><td colspan="15" class="text-center text-muted py-4">
             暂无数据。请管理员在「数据导入」上传 .xlsm 源文件。
           </td></tr>
           {% endfor %}
@@ -134,7 +131,7 @@
   <div class="card-footer d-flex justify-content-between align-items-center">
     <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
     <div>
-      {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company ~ '&check_status=' ~ check_status ~ '&date_from=' ~ date_from ~ '&date_to=' ~ date_to %}
+      {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company ~ '&date_from=' ~ date_from ~ '&date_to=' ~ date_to %}
       {% if page > 1 %}
       <a class="btn btn-sm btn-outline-secondary" href="/invoices?{{ qs }}&page={{ page - 1 }}">上一页</a>
       {% endif %}
@@ -149,6 +146,26 @@
 
 {% block scripts %}
 <script>
+function dismissContinue() {
+  document.getElementById('continue-banner').classList.add('d-none');
+  try { localStorage.removeItem('last_edit_ids'); } catch (e) {}
+}
+
+(function () {
+  try {
+    const ids = localStorage.getItem('last_edit_ids');
+    if (!ids) return;
+    const nos = localStorage.getItem('last_edit_nos') || '';
+    const back = localStorage.getItem('last_edit_back') || '/invoices';
+    const backParam = back.replace('/invoices', '');
+    document.getElementById('continue-banner').classList.remove('d-none');
+    document.getElementById('last-edit-nos').textContent = nos || ids;
+    document.getElementById('continue-link').href =
+      '/invoices/edit?ids=' + encodeURIComponent(ids) +
+      '&back=' + encodeURIComponent(backParam);
+  } catch (e) {}
+})();
+
 function toggleAll(box) {
   document.querySelectorAll('.row-check').forEach(c => { c.checked = box.checked; });
 }
@@ -167,12 +184,8 @@ function openSelected() {
           '\n\n请只勾选 Delivery to 相同的发票后再试。');
     return;
   }
-  const failed = boxes.filter(c => c.dataset.checkStatus === '{{ CHECK_FAILED }}');
-  if (failed.length) {
-    const nos = failed.map(c => c.dataset.invoiceNo).join('、');
-    if (!confirm('以下发票已被核对标记为「有问题」，继续编辑 / 导出？\n\n' + nos)) return;
-  }
-  window.location.href = '/invoices/edit?ids=' + boxes.map(c => c.value).join(',');
+  window.location.href = '/invoices/edit?ids=' + boxes.map(c => c.value).join(',') +
+    '&back=' + encodeURIComponent(location.search);
 }
 </script>
 {% endblock %}

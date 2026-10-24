@@ -50,59 +50,28 @@ def main() -> None:
     db.commit()
     db.close()
 
-    # --- type2 核对 ---
+    # --- type2 只读查看 ---
     c = httpx.Client(base_url=BASE, timeout=30, follow_redirects=False)
     check(login(c, "type2", "test1234") == 303, "type2 登录")
     r = c.get("/details?invoice_id=1")
     check(r.status_code == 200, "type2 打开发票1明细")
-    check("核对状态" in r.text, "明细页显示核对状态")
-    check("待核对" in r.text, "初始状态为待核对")
+    check("核对状态" not in r.text, "明细页不再显示核对状态")
+    check("核对通过" not in r.text and 'name="status"' not in r.text,
+          "明细页不再显示核对标记按钮")
 
     r = c.post(
         "/details/1/check",
-        data={"csrf": csrf_from(r.text), "status": "failed",
-              "note": "数量与装箱单不一致"},
+        data={"csrf": "x", "status": "failed", "note": "不应生效"},
         follow_redirects=False,
     )
-    check(r.status_code == 303, "标记问题后重定向")
-    r = c.get("/details?invoice_id=1")
-    check("有问题" in r.text, "标记后状态为有问题")
-    check("数量与装箱单不一致" in r.text, "问题说明被保存")
-
-    r = c.get("/details?invoice_id=2")
-    r = c.post(
-        "/details/2/check",
-        data={"csrf": csrf_from(r.text), "status": "failed", "note": ""},
-        follow_redirects=False,
-    )
-    check(r.status_code == 303 and "invoice_id=2" in r.headers.get("location", ""),
-          "空问题说明被拒绝并回跳")
-    r = c.get("/details?invoice_id=2")
-    check("待核对" in r.text, "发票2仍为待核对")
-
-    r = c.get("/details?invoice_id=2")
-    r = c.post(
-        "/details/2/check",
-        data={"csrf": csrf_from(r.text), "status": "passed", "note": ""},
-        follow_redirects=False,
-    )
-    check(r.status_code == 303, "核对通过后重定向")
-    r = c.get("/details?invoice_id=2")
-    check("核对通过" in r.text, "发票2状态为核对通过")
+    check(r.status_code in (404, 405), "核对标记接口已移除")
 
     r = c.get("/details?check_status=failed")
-    # 页面可能有两个 tbody（批量核对表在前、明细表在后），取最后一个
-    tbody = r.text.split("<tbody>")[-1].split("</tbody>")[0]
-    nos = set()
-    for tr in tbody.split("<tr")[1:]:
-        first_td = tr.split("</td>")[0]
-        nos.add(re.sub(r"[^A-Za-z0-9\-]", "", re.sub(r"<[^>]+>", "", first_td)))
-    nos.discard("")
-    check(nos == {"26LF0845"}, f"按有问题筛选只显示问题发票的明细行 {sorted(nos)}")
+    check(r.status_code == 200 and "核对状态" not in r.text, "状态筛选 UI 已移除")
 
     # 手动输入搜索发票号：唯一命中自动选中（2609006 无相似号）
     r = c.get("/details?inv_q=2609006")
-    check("Invoice No.:</span> <b>2609006</b>" in r.text, "搜索发票号唯一命中自动选中")
+    check("Fabric Invoice No.:</span> <b>2609006</b>" in r.text, "搜索发票号唯一命中自动选中")
     check('name="inv_q"' in r.text and 'value="2609006"' in r.text, "搜索框保留输入值")
 
     # 模糊匹配多命中（26LF0845 匹配 26LF0845 和 26LF0845-1）：不自动选中
@@ -111,7 +80,7 @@ def main() -> None:
 
     # 客户名模糊搜索多命中：不自动选中，下拉只显示匹配项
     r = c.get("/details?inv_q=EASTEX")
-    check('全部发票（先选一张才能核对）' in r.text, "多命中时不自动选中")
+    check("全部发票" in r.text, "多命中时不自动选中")
     check("EASTEX GARMENT" in r.text and "DAKOTA" not in r.text.split("<select")[1].split("</select>")[0],
           "下拉只含匹配客户的发票")
 
@@ -124,15 +93,13 @@ def main() -> None:
     c = httpx.Client(base_url=BASE, timeout=30, follow_redirects=False)
     check(login(c, "type1", "test1234") == 303, "type1 登录")
     r = c.get("/invoices")
-    check("有问题" in r.text, "列表显示有问题徽章")
-    check("badge text-bg-danger" in r.text, "侧栏有问题角标")
-    check("核对" in r.text, "列表有核对列")
-    check("data-check-status" in r.text and "data-invoice-no" in r.text,
-          "勾选框携带核对状态与发票号（供编辑/导出前拦截）")
-    check("已被核对标记为" in r.text or "openSelected" in r.text,
-          "openSelected 含拦截提示逻辑")
+    check(r.status_code == 200, "type1 列表页正常")
+    check("核对" not in r.text.split("<tbody")[0], "列表不再显示核对列")
+    check("data-check-status" not in r.text and "data-invoice-no" in r.text,
+          "勾选框只携带发票号，不再携带核对状态")
+    check("已被核对标记为" not in r.text, "编辑/导出前拦截提示已移除")
     r = c.get("/invoices?check_status=failed")
-    check("数量与装箱单不一致" in r.text or "有问题" in r.text, "列表可按有问题筛选")
+    check(r.status_code == 200, "列表页状态筛选参数兼容（忽略）")
     r = c.get("/details", follow_redirects=False)
     check(r.status_code == 403, "type1 无权访问 /details")
     c.close()
@@ -148,28 +115,19 @@ def main() -> None:
     c = httpx.Client(base_url=BASE, timeout=30, follow_redirects=False)
     check(login(c, "admin", "admin123") == 303, "admin 登录")
     r = c.get("/invoices")
-    check(r.status_code == 200 and "badge text-bg-danger" in r.text, "admin 列表页正常+角标")
+    check(r.status_code == 200 and "data-check-status" not in r.text, "admin 列表页正常（无核对列）")
     r = c.get("/details")
-    check(r.status_code == 200 and "badge text-bg-secondary" in r.text, "admin 明细页正常+角标")
+    check(r.status_code == 200 and "核对状态" not in r.text, "admin 明细页正常（无核对状态）")
     c.close()
 
-    # --- 批量核对 ---
+    # --- 批量核对接口已移除 ---
     c = httpx.Client(base_url=BASE, timeout=30, follow_redirects=False)
     login(c, "type2", "test1234")
     r = c.get("/details?check_status=pending")
-    check("批量核对" in r.text and 'class="form-check-input batch-check"' in r.text,
-          "明细页显示批量核对清单")
-    # 取前两张待核对的 id
-    ids = re.findall(r'class="form-check-input batch-check" value="(\d+)"', r.text)[:2]
-    check(len(ids) == 2, f"批量清单可勾选（取到 {len(ids)} 张）")
-    csrf = csrf_from(r.text)
-    r = c.post("/details/batch-check",
-               data={"ids": ",".join(ids), "csrf": csrf}, follow_redirects=False)
-    check(r.status_code == 303, "批量通过后重定向")
-    db = _SL()
-    rows = db.query(_Inv).filter(_Inv.id.in_([int(x) for x in ids])).all()
-    check(all(x.check_status == CHECK_PASSED for x in rows), "批量后状态均为核对通过")
-    db.close()
+    check("批量核对" not in r.text, "明细页不再显示批量核对清单")
+    r = c.post("/details/batch-check", data={"ids": "1,2", "csrf": "x"},
+               follow_redirects=False)
+    check(r.status_code in (404, 405), "批量核对接口已移除")
     c.close()
 
     # --- 人工字段落库 ---

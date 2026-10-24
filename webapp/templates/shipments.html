@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}装柜列表 - 报关发票(柬埔寨)数字管理平台{% endblock %}
+{% block heading %}装柜列表{% endblock %}
+{% block crumb %}共 {{ total }} 行{% endblock %}
+
+{% block content %}
+
+<div class="card no-print">
+  <div class="card-body py-2">
+    <form class="row g-2 align-items-end" method="get" action="/shipments">
+      <div class="col-6 col-md-2">
+        <label class="form-label">月份</label>
+        <select class="form-select form-select-sm" name="month">
+          <option value="">全部</option>
+          {% for m in months %}
+          <option value="{{ m }}" {% if month == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">公司</label>
+        <select class="form-select form-select-sm" name="company">
+          <option value="">全部</option>
+          {% for c in ['Vanco', 'Eastex'] %}
+          <option value="{{ c }}" {% if company == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">运输方式</label>
+        <select class="form-select form-select-sm" name="mode">
+          <option value="">全部</option>
+          {% for m in ['AIR', 'SEA', 'TRUCK'] %}
+          <option value="{{ m }}" {% if mode == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">搜索</label>
+        <input class="form-control form-control-sm" name="q" value="{{ q }}"
+               placeholder="Custom # / 提单号 / Fty Inv / 供应商 / 品名">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">筛选</button>
+        <a class="btn btn-outline-secondary btn-sm" href="/shipments">重置</a>
+      </div>
+      <div class="col-auto ms-auto">
+        {% if download_url %}
+        <a class="btn btn-success btn-sm" href="{{ download_url }}"
+           title="下载 {{ current_month }} 装柜列表 Excel">
+          下载 {{ current_month }} Excel</a>
+        {% else %}
+        <button class="btn btn-outline-secondary btn-sm" disabled>暂无可下载文件</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 shipments-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Fty Inv</th>
+            <th>Shipper</th>
+            <th>EST/VCO</th>
+            <th>Custom #</th>
+            <th>ID</th>
+            <th class="num">Package</th>
+            <th>Blading</th>
+            <th>Container 1</th>
+            <th>Container 2</th>
+            <th>Container 3</th>
+            <th>Container 4</th>
+            <th class="num">NW KG</th>
+            <th class="num">GW KG</th>
+            <th>DESCRIPTION</th>
+            <th>Mode</th>
+            <th>ETD</th>
+            <th>ETA</th>
+            <th>POL</th>
+            <th>VESSEL</th>
+            <th>Carrier</th>
+            <th>更新时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="text-nowrap">{{ r.date or '-' }}</td>
+            <td class="small">{{ r.fty_inv or '-' }}</td>
+            <td>{{ r.shipper or '-' }}</td>
+            <td>{{ r.est_vco or '-' }}</td>
+            <td class="small text-nowrap">{{ r.custom_no or '-' }}</td>
+            <td class="small">
+              <form method="post" action="/api/shipments/{{ r.id }}/ref-id"
+                    class="d-flex gap-1 align-items-center">
+                <input type="hidden" name="month" value="{{ month }}">
+                <input type="hidden" name="company" value="{{ company }}">
+                <input type="hidden" name="mode" value="{{ mode }}">
+                <input type="hidden" name="q" value="{{ q }}">
+                <input type="hidden" name="page" value="{{ page }}">
+                <input class="form-control form-control-sm ref-id-input" name="ref_id"
+                       value="{{ r.ref_id or '' }}" placeholder="填 ID">
+                <button class="btn btn-sm btn-outline-primary text-nowrap" type="submit">保存</button>
+              </form>
+            </td>
+            <td class="num">{{ r.package if r.package is not none else '-' }}</td>
+            <td class="small text-nowrap">{{ r.blading or '-' }}</td>
+            <td class="small">{{ r.container_1 or '-' }}</td>
+            <td class="small">{{ r.container_2 or '-' }}</td>
+            <td class="small">{{ r.container_3 or '-' }}</td>
+            <td class="small">{{ r.container_4 or '-' }}</td>
+            <td class="num">{{ '%.3f'|format(r.nw_kg or 0) }}</td>
+            <td class="num">{{ '%.3f'|format(r.gw_kg or 0) }}</td>
+            <td class="small">{{ r.description or '-' }}</td>
+            <td>
+              {% if r.mode == 'AIR' %}<span class="badge bg-info text-dark">AIR</span>
+              {% elif r.mode == 'SEA' %}<span class="badge bg-primary">SEA</span>
+              {% elif r.mode == 'TRUCK' %}<span class="badge bg-secondary">TRUCK</span>
+              {% else %}{{ r.mode or '-' }}{% endif %}
+            </td>
+            <td class="text-nowrap">{{ r.etd or '-' }}</td>
+            <td class="text-nowrap">{{ r.eta or '-' }}</td>
+            <td class="small">{{ r.pol or '-' }}</td>
+            <td class="small">{{ r.vessel or '-' }}</td>
+            <td class="small">{{ r.carrier or '-' }}</td>
+            <td class="small text-muted text-nowrap">
+              {{ r.updated_at.strftime('%Y-%m-%d %H:%M') if r.updated_at else '-' }}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="22" class="text-center text-muted py-4">
+              暂无装柜列表。在发票列表选择发票，点击“合并编辑 / 导出”生成 .xlsm 后会自动汇总到这里。
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if pages > 1 %}
+  <div class="card-footer d-flex justify-content-between">
+    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <div>
+      {% if page > 1 %}
+      <a class="btn btn-sm btn-outline-secondary"
+         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page - 1 }}">上一页</a>
+      {% endif %}
+      {% if page < pages %}
+      <a class="btn btn-sm btn-outline-secondary"
+         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page + 1 }}">下一页</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<style>
+  .shipments-table { font-size: .78rem; white-space: nowrap; }
+  .shipments-table td.small { white-space: normal; min-width: 90px; }
+</style>
+{% endblock %}

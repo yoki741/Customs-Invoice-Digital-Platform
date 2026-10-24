@@ -80,10 +80,6 @@ def main() -> None:
     sheets = list(data["snapshot"]["sheets"].values())
     print("[OK] 快照:", [s["name"] for s in sheets], "| 可编辑:", data["editable"])
 
-    r = client.get("/api/invoices/preview.xlsx", params={"ids": "1"})
-    assert r.status_code == 200, (r.status_code, r.text[:300])
-    print("[OK] 预填 xlsx:", len(r.content), "bytes")
-
     payload = {
         "form": {
             "date": "2026-09-10",
@@ -177,15 +173,10 @@ def main() -> None:
     assert "D202609007" in r.text  # 非法日期忽略
     print("[OK] 日期范围筛选（空/全含/非法忽略）")
 
-    # --- 问题说明可见性（先把发票标记为有问题） ---
+    # --- 问题说明可见性 ---
     r = client.get("/details?invoice_id=1")
-    csrf = _csrf_from(r.text)
-    client.post("/details/1/check", data={
-        "csrf": csrf, "status": "failed", "note": "冒烟测试问题说明"},
-        follow_redirects=False)
-    r = client.get("/invoices")
-    assert "冒烟测试问题说明" in r.text, "列表页应直接显示问题说明"
-    print("[OK] 列表页直接显示问题说明")
+    assert r.status_code == 200
+    print("[OK] 明细页只读查看（核对标记功能已移除）")
 
     print("\n全部冒烟测试通过")
 

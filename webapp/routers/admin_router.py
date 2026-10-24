@@ -8,9 +8,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, noload
 
-from ..auth import ROLE_ALL, audit, hash_password, require_admin, require_csrf
+from ..auth import ROLE_ALL, audit, hash_password, require_admin, require_csrf, require_type1
 from ..importer import import_source_file, save_upload, scan_uploads
 from ..models import ROLE_LABELS, AuditLog, ExportJob, Invoice, User, get_db
 from ..templates_setup import templates
@@ -57,7 +57,11 @@ async def admin_home(
         "failed": db.query(ExportJob).filter(ExportJob.success.is_(False)).count(),
     }
     recent = (
-        db.query(Invoice).order_by(Invoice.uploaded_at.desc()).limit(8).all()
+        db.query(Invoice)
+        .options(noload(Invoice.items))
+        .order_by(Invoice.uploaded_at.desc())
+        .limit(8)
+        .all()
     )
     return templates.TemplateResponse(
         request,
@@ -189,7 +193,7 @@ async def user_password(
 @router.get("/upload")
 async def upload_page(
     request: Request,
-    user: User = Depends(require_admin),
+    user: User = Depends(require_type1),
 ) -> object:
     return templates.TemplateResponse(
         request,
@@ -206,7 +210,7 @@ async def upload_files(
     confirm: str = Form(""),
     pending_json: str = Form(""),
     files: list[UploadFile] = File(default=[]),
-    user: User = Depends(require_admin),
+    user: User = Depends(require_type1),
     db: Session = Depends(get_db),
 ) -> object:
     require_csrf(request, csrf)
@@ -257,6 +261,13 @@ async def upload_files(
         raw = await upload.read()
         if not raw:
             results.append({"file": upload.filename, "ok": False, "message": "空文件"})
+            continue
+        # 大小预检：超过 20MB 拒绝，防滥用
+        if len(raw) > 20 * 1024 * 1024:
+            results.append({
+                "file": upload.filename, "ok": False,
+                "message": "文件超过 20MB，请检查文件内容后重试",
+            })
             continue
         # 扩展名预检：不合法直接提示，不落盘
         suffix = Path(upload.filename).suffix.lower()
@@ -338,7 +349,7 @@ async def export_history(
         except Exception:
             pass
     invoice_map = (
-        {i.id: i.invoice_no for i in db.query(Invoice).filter(Invoice.id.in_(all_ids))}
+        {i.id: i.invoice_no for i in db.query(Invoice).options(noload(Invoice.items)).filter(Invoice.id.in_(all_ids))}
         if all_ids
         else {}
     )
@@ -359,7 +370,6 @@ async def export_history(
 
 
 # ---- 审计日志 ----
-
 
 @router.get("/audit")
 async def audit_log(
@@ -406,4 +416,96 @@ async def audit_log(
             "pages": pages,
             "total": total,
         },
+    )
+
+
+# ---- 发票删除 ----
+
+@router.post("/invoices/{invoice_id}/delete")
+async def invoice_delete(
+    request: Request,
+    invoice_id: int,
+    csrf: str = Form(""),
+    back: str = Form(""),
+    current: User = Depends(require_type1),
+    db: Session = Depends(get_db),
+) -> object:
+    """删除发票记录（第一类账号/管理员；明细级联删除，源文件保留，操作留痕）。"""
+    require_csrf(request, csrf)
+    invoice = db.get(Invoice, invoice_id)
+    target = back or "/invoices"
+    if not target.startswith("/"):
+        target = "/invoices"
+    if invoice is None:
+        _flash(request, "warning", "发票不存在，可能已被删除")
+        return RedirectResponse(target, status_code=303)
+    no = invoice.invoice_no or f"#{invoice.id}"
+    source = invoice.source_filename or "-"
+    db.delete(invoice)
+    db.commit()
+    audit(db, current, "invoice.delete", f"删除发票 {no}（源文件保留: {source}）")
+    _flash(request, "success", f"已删除发票 {no}（源文件保留，未删除）")
+    return RedirectResponse(target, status_code=303)
+
+
+# ---- 统计报表 ----
+
+@router.get("/stats")
+async def admin_stats(
+    request: Request,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> object:
+    from sqlalchemy import func
+
+    # 按月导出统计（最近 12 个月）
+    monthly_rows = (
+        db.query(
+            func.strftime("%Y-%m", ExportJob.created_at).label("ym"),
+            func.count(ExportJob.id).label("cnt"),
+            func.sum(ExportJob.customs_weight).label("w"),
+            func.sum(ExportJob.total_amount).label("amt"),
+        )
+        .filter(ExportJob.success.is_(True))
+        .group_by("ym")
+        .order_by(func.strftime("%Y-%m", ExportJob.created_at).desc())
+        .limit(12)
+        .all()
+    )
+    monthly = [
+        {
+            "ym": r.ym,
+            "cnt": r.cnt,
+            "weight": int(r.w or 0),
+            "amount": round(r.amt or 0, 2),
+        }
+        for r in monthly_rows
+    ]
+    monthly.reverse()
+
+    # 台账分布
+    by_company = (
+        db.query(Invoice.company, func.count(Invoice.id))
+        .group_by(Invoice.company)
+        .all()
+    )
+    by_transport = (
+        db.query(Invoice.transport, func.count(Invoice.id))
+        .group_by(Invoice.transport)
+        .all()
+    )
+    stats = {
+        "invoices": db.query(Invoice).count(),
+        "exports": db.query(ExportJob).filter(ExportJob.success.is_(True)).count(),
+        "failed": db.query(ExportJob).filter(ExportJob.success.is_(False)).count(),
+        "companies": [{"name": c or "未识别", "cnt": n} for c, n in by_company],
+        "transports": [{"name": t or "未识别", "cnt": n} for t, n in by_transport],
+    }
+    max_cnt = max((r["cnt"] for r in monthly), default=1)
+    for r in monthly:
+        r["bar"] = round(r["cnt"] / max_cnt * 100, 1)
+    return templates.TemplateResponse(
+        request,
+        "admin_stats.html",
+        {"user": user, "monthly": monthly, "stats": stats},
     )

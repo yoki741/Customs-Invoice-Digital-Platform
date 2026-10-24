@@ -35,3 +35,10 @@ webapp/static/vendor/assets/
 # 虚拟环境
 .venv/
 venv/
+
+# 业务数据与调试产物（不入库）
+screenshots/
+*.xlsx
+!模板文件/*.xlsx
+tests/_*.py
+webapp/static_src/e2e_*.mjs

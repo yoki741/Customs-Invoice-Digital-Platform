@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -18,6 +19,7 @@ PRICE_FILE = BASE_DIR / "Eastex Vanco CDC 布料单价.xlsx"
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 OUTPUT_DIR = DATA_DIR / "outputs"
+HISTORY_DIR = DATA_DIR / "file_history"
 LOG_DIR = BASE_DIR / "logs"
 
 DB_PATH = DATA_DIR / "app.db"
@@ -31,8 +33,16 @@ TRANSPORT_TEMPLATES = {
     "陆运": "陆运模板.xlsx",
 }
 
+# 装柜列表（Shipment List）模板与输出目录
+SHIPMENT_LIST_TEMPLATE = TEMPLATE_DIR / "装柜列表模板.xlsx"
+SHIPMENT_LIST_DIR = OUTPUT_DIR / "装柜列表"
+
+# 导出后是否用 Excel 开启“修订跟踪”（本地修改可回溯）。
+# Excel 不可用时自动跳过；设 INVOICE_TRACK_CHANGES=0 可关闭。
+ENABLE_TRACK_CHANGES = os.environ.get("INVOICE_TRACK_CHANGES", "1") != "0"
+
 
 def ensure_dirs() -> None:
     """创建运行所需目录。"""
-    for path in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR, LOG_DIR):
+    for path in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR, SHIPMENT_LIST_DIR, LOG_DIR):
         path.mkdir(parents=True, exist_ok=True)

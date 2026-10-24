@@ -118,6 +118,9 @@ class Invoice(Base):
 
     # 人工填写字段的持久化 JSON（date/bill_no/ship_mode/... 按 field_map 的 key）
     manual_values: Mapped[str] = mapped_column(Text, default="{}")
+    # 最近一次保存人工字段的人 / 时间（并发编辑提醒）
+    manual_saved_by: Mapped[Optional[str]] = mapped_column(String(64))
+    manual_saved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     items: Mapped[list["InvoiceItem"]] = relationship(
         back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
@@ -164,6 +167,63 @@ class ExportJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ExportFileVersion(Base):
+    """导出文件记录：每次导出/编辑保存各一条（修改留痕）。"""
+
+    __tablename__ = "export_file_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    kind: Mapped[str] = mapped_column(String(16), default="export")  # export / save
+    folder: Mapped[str] = mapped_column(String(255), default="")
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    file_path: Mapped[str] = mapped_column(String(512), default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    invoice_ids: Mapped[str] = mapped_column(Text, default="[]")
+    form_values: Mapped[str] = mapped_column(Text, default="{}")
+    backup_path: Mapped[str] = mapped_column(String(512), default="")
+    source_version_id: Mapped[Optional[int]] = mapped_column(Integer)
+    source_check: Mapped[str] = mapped_column(String(32), default="")  # ok / missing
+    created_by: Mapped[Optional[str]] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ShipmentListEntry(Base):
+    """装柜列表（Shipment List）一行，导出时落库并按月汇总成 Excel。"""
+
+    __tablename__ = "shipment_list_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    month: Mapped[str] = mapped_column(String(7), index=True, default="")
+    date: Mapped[str] = mapped_column(String(10), default="")
+    fty_inv: Mapped[str] = mapped_column(Text, default="")
+    shipper: Mapped[str] = mapped_column(String(128), default="")
+    est_vco: Mapped[str] = mapped_column(String(32), default="")
+    custom_no: Mapped[str] = mapped_column(String(128), index=True, default="")
+    package: Mapped[Optional[float]] = mapped_column(Float)
+    blading: Mapped[str] = mapped_column(String(128), default="")
+    container_1: Mapped[str] = mapped_column(String(64), default="")
+    container_2: Mapped[str] = mapped_column(String(64), default="")
+    container_3: Mapped[str] = mapped_column(String(64), default="")
+    container_4: Mapped[str] = mapped_column(String(64), default="")
+    nw_kg: Mapped[float] = mapped_column(Float, default=0.0)
+    gw_kg: Mapped[float] = mapped_column(Float, default=0.0)
+    description: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str] = mapped_column(String(16), index=True, default="")
+    etd: Mapped[str] = mapped_column(String(10), default="")
+    eta: Mapped[str] = mapped_column(String(10), default="")
+    pol: Mapped[str] = mapped_column(String(128), default="")
+    vessel: Mapped[str] = mapped_column(String(128), default="")
+    carrier: Mapped[str] = mapped_column(String(128), default="")
+    ref_id: Mapped[str] = mapped_column(String(128), default="")
+    invoice_ids: Mapped[str] = mapped_column(Text, default="[]")
+    created_by: Mapped[Optional[str]] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
@@ -185,8 +245,12 @@ SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 
 def init_db() -> None:
     """建表。"""
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        conn.exec_driver_sql("PRAGMA busy_timeout=5000")
     Base.metadata.create_all(engine)
     _migrate_check_fields()
+    _migrate_shipment_ref_id()
 
 
 def backup_db(keep: int = 30) -> Optional[Path]:
@@ -224,6 +288,8 @@ def _migrate_check_fields() -> None:
             ("checked_by", "VARCHAR(64)"),
             ("checked_at", "TIMESTAMP"),
             ("manual_values", "TEXT DEFAULT '{}'"),
+            ("manual_saved_by", "VARCHAR(64)"),
+            ("manual_saved_at", "TIMESTAMP"),
         ]
         for name, decl in cols:
             if name not in existing:
@@ -232,6 +298,43 @@ def _migrate_check_fields() -> None:
             conn.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_invoices_check_status "
                 "ON invoices (check_status)"
+            )
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_invoices_uploaded_at "
+            "ON invoices (uploaded_at)"
+        )
+
+    # export_file_versions 后补列（旧库迁移）
+    with engine.begin() as conn:
+        existing = {
+            row[1]
+            for row in conn.exec_driver_sql(
+                "PRAGMA table_info(export_file_versions)"
+            ).fetchall()
+        }
+        for name, decl in (
+            ("form_values", "TEXT DEFAULT '{}'"),
+            ("backup_path", "VARCHAR(512) DEFAULT ''"),
+        ):
+            if name not in existing:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE export_file_versions ADD COLUMN {name} {decl}"
+                )
+
+
+def _migrate_shipment_ref_id() -> None:
+    """为已有库补上装柜列表 ref_id 列（手动填写的 ID，仅存在于数据库）。"""
+    with engine.begin() as conn:
+        existing = {
+            row[1]
+            for row in conn.exec_driver_sql(
+                "PRAGMA table_info(shipment_list_entries)"
+            ).fetchall()
+        }
+        if "ref_id" not in existing:
+            conn.exec_driver_sql(
+                "ALTER TABLE shipment_list_entries "
+                "ADD COLUMN ref_id VARCHAR(128) DEFAULT ''"
             )
 
 
