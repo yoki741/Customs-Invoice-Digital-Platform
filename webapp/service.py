@@ -25,6 +25,7 @@ from core.exporter import (
 from core.shipment_list import (
     ShipmentRow,
     build_row_from_result,
+    eta_for,
     month_of,
     month_path,
     parse_date,
@@ -355,11 +356,37 @@ def _archive_history(db: Session, folder: str, filename: str, out_path: Path) ->
     return str(dest)
 
 
+def _apply_shipment_overrides(row: ShipmentRow, raw: dict[str, Any]) -> None:
+    """把导出弹窗里手工填写的装柜列表字段覆盖到行上（空值跳过）。"""
+    def _s(key: str) -> str:
+        value = raw.get(key)
+        return "" if value is None else str(value).strip()
+
+    package_text = _s("package")
+    if package_text:
+        try:
+            row.package = float(package_text)
+        except (TypeError, ValueError):
+            pass
+    if _s("etd"):
+        row.etd = parse_date(_s("etd"))
+    if _s("eta"):
+        row.eta = parse_date(_s("eta"))
+    elif row.etd is not None:
+        # 只填了 ETD 没填 ETA 时，按运输方式自动推算
+        row.eta = eta_for(row.mode, row.etd)
+    if _s("vessel"):
+        row.vessel = _s("vessel")
+    if _s("carrier"):
+        row.carrier = _s("carrier")
+
+
 def export_invoices(
     db: Session,
     invoices: list[Invoice],
     form_values: dict[str, Any],
     user: Optional[User] = None,
+    shipment: Optional[dict[str, Any]] = None,
 ) -> tuple[Path, dict[str, Any]]:
     """生成最终 .xlsm（版本化落盘、注入追踪表）并记录导出历史。
 
@@ -388,6 +415,8 @@ def export_invoices(
         transport=result.transport,
         customs_weight=result.customs_weight,
     )
+    if shipment:
+        _apply_shipment_overrides(shipment_row, shipment)
 
     ensure_dirs()
     folder = _safe(values["bill_no"]) or "未命名"

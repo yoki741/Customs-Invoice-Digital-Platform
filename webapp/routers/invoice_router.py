@@ -42,6 +42,7 @@ router = APIRouter(tags=["invoices"])
 
 class ExportBody(BaseModel):
     form: dict = {}
+    shipment: dict = {}
     last_saved_at: str = ""
     force: bool = False
 
@@ -227,7 +228,7 @@ async def invoice_export(
         return JSONResponse({"ok": False, "error": "未找到发票"}, status_code=404)
 
     try:
-        path, info = export_invoices(db, invoices, body.form, user)
+        path, info = export_invoices(db, invoices, body.form, user, shipment=body.shipment)
     except ValueError as exc:
         record_failure(db, invoices, body.form, str(exc), user)
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)

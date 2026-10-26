@@ -26,6 +26,9 @@ FIRST_DATA_ROW = 2
 EXPECTED_COLS = 20
 
 _CONTAINER_RE = re.compile(r"[A-Z]{4}\d{7}")
+# 兜底分支用于分隔符拆分的柜号，需形如柜号（4 字母 + 7 位，或旧式 3 字母 + 6 位），
+# 避免把 "PART OF 1X45HQ" 这类说明性文字当作柜号
+_LOOSE_CONTAINER_RE = re.compile(r"^[A-Z]{3,4}\d{6,7}$")
 _PLACE_PREFIXES = (
     "port of loading:",
     "port of loading：",
@@ -222,7 +225,7 @@ def _containers(manual_info: str, source_numbers: Sequence[str]) -> list[str]:
             candidates = [
                 part.strip()
                 for part in re.split(r"[,;/\n\r]+", text)
-                if part.strip()
+                if _LOOSE_CONTAINER_RE.fullmatch(part.strip().upper())
             ]
         for item in candidates:
             if item and item not in found:

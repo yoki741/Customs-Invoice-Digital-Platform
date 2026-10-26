@@ -64,23 +64,20 @@
         <thead>
           <tr>
             <th>Date</th>
+            <th>Mode</th>
+            <th>Custom #</th>
+            <th>Blading</th>
             <th>Fty Inv</th>
             <th>Shipper</th>
             <th>EST/VCO</th>
-            <th>Custom #</th>
+            <th>柜号</th>
             <th class="num">Package</th>
-            <th>Blading</th>
-            <th>Container 1</th>
-            <th>Container 2</th>
-            <th>Container 3</th>
-            <th>Container 4</th>
             <th class="num">NW KG</th>
             <th class="num">GW KG</th>
             <th>DESCRIPTION</th>
-            <th>Mode</th>
+            <th>POL</th>
             <th>ETD</th>
             <th>ETA</th>
-            <th>POL</th>
             <th>VESSEL</th>
             <th>Carrier</th>
             <th>更新时间</th>
@@ -90,28 +87,31 @@
           {% for r in rows %}
           <tr>
             <td class="text-nowrap">{{ r.date or '-' }}</td>
-            <td class="small">{{ r.fty_inv or '-' }}</td>
-            <td>{{ r.shipper or '-' }}</td>
-            <td>{{ r.est_vco or '-' }}</td>
-            <td class="small text-nowrap">{{ r.custom_no or '-' }}</td>
-            <td class="num">{{ r.package if r.package is not none else '-' }}</td>
-            <td class="small text-nowrap">{{ r.blading or '-' }}</td>
-            <td class="small">{{ r.container_1 or '-' }}</td>
-            <td class="small">{{ r.container_2 or '-' }}</td>
-            <td class="small">{{ r.container_3 or '-' }}</td>
-            <td class="small">{{ r.container_4 or '-' }}</td>
-            <td class="num">{{ '%.3f'|format(r.nw_kg or 0) }}</td>
-            <td class="num">{{ '%.3f'|format(r.gw_kg or 0) }}</td>
-            <td class="small">{{ r.description or '-' }}</td>
             <td>
               {% if r.mode == 'AIR' %}<span class="badge bg-info text-dark">AIR</span>
               {% elif r.mode == 'SEA' %}<span class="badge bg-primary">SEA</span>
               {% elif r.mode == 'TRUCK' %}<span class="badge bg-secondary">TRUCK</span>
               {% else %}{{ r.mode or '-' }}{% endif %}
             </td>
+            <td class="small text-nowrap fw-semibold">{{ r.custom_no or '-' }}</td>
+            <td class="small text-nowrap">{{ r.blading or '-' }}</td>
+            <td class="small">{{ r.fty_inv or '-' }}</td>
+            <td>{{ r.shipper or '-' }}</td>
+            <td>{{ r.est_vco or '-' }}</td>
+            <td class="small text-nowrap">
+              {% for c in [r.container_1, r.container_2, r.container_3, r.container_4] if c %}
+                {{ c }}{% if not loop.last %}<br>{% endif %}
+              {% else %}
+                -
+              {% endfor %}
+            </td>
+            <td class="num">{{ r.package if r.package is not none else '-' }}</td>
+            <td class="num">{{ '%.3f'|format(r.nw_kg or 0) }}</td>
+            <td class="num">{{ '%.3f'|format(r.gw_kg or 0) }}</td>
+            <td class="small">{{ r.description or '-' }}</td>
+            <td class="small">{{ r.pol or '-' }}</td>
             <td class="text-nowrap">{{ r.etd or '-' }}</td>
             <td class="text-nowrap">{{ r.eta or '-' }}</td>
-            <td class="small">{{ r.pol or '-' }}</td>
             <td class="small">{{ r.vessel or '-' }}</td>
             <td class="small">{{ r.carrier or '-' }}</td>
             <td class="small text-muted text-nowrap">
@@ -120,7 +120,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="21" class="text-center text-muted py-4">
+            <td colspan="18" class="text-center text-muted py-4">
               暂无装柜列表。在发票列表选择发票，点击“合并编辑 / 导出”生成 .xlsm 后会自动汇总到这里。
             </td>
           </tr>

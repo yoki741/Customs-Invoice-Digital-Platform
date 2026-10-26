@@ -104,6 +104,49 @@
     </div>
   </div>
 </div>
+
+<!-- 装柜列表补充信息弹窗（导出时弹出，可暂不填） -->
+<div class="modal fade" id="shipment-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title">装柜列表补充信息（可暂不填）</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small mb-1">Package 件数</label>
+            <input type="number" step="any" min="0" class="form-control form-control-sm" id="sm-package">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">VESSEL 船名 / 航班</label>
+            <input type="text" class="form-control form-control-sm" id="sm-vessel">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">ETD 预计离港</label>
+            <input type="date" class="form-control form-control-sm" id="sm-etd">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">ETA 预计到港</label>
+            <input type="date" class="form-control form-control-sm" id="sm-eta">
+          </div>
+          <div class="col-12">
+            <label class="form-label small mb-1">Carrier 货代</label>
+            <input type="text" class="form-control form-control-sm" id="sm-carrier">
+          </div>
+        </div>
+        <div class="small text-muted mt-2">
+          这 5 项会写入当月装柜列表；留空则暂时不填，之后可在 Excel 里补。
+        </div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-success btn-sm" id="btn-confirm-export" onclick="confirmExport()">确认导出</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -558,6 +601,8 @@ async function loadSnapshot() {
   setStatus('已就绪');
 }
 
+let pendingExportForm = null;
+
 async function doExport() {
   const form = collectForm();
   const missing = FIELDS.filter(f => f.applicable && f.required && !form[f.key]);
@@ -567,6 +612,24 @@ async function doExport() {
     if (el) el.focus();
     return;
   }
+  pendingExportForm = form;
+  // 清空弹窗残留，避免带入上一次导出的值
+  ['sm-package', 'sm-etd', 'sm-eta', 'sm-vessel', 'sm-carrier'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('shipment-modal')).show();
+}
+
+async function confirmExport() {
+  const shipment = {
+    package: document.getElementById('sm-package').value.trim(),
+    etd: document.getElementById('sm-etd').value.trim(),
+    eta: document.getElementById('sm-eta').value.trim(),
+    vessel: document.getElementById('sm-vessel').value.trim(),
+    carrier: document.getElementById('sm-carrier').value.trim(),
+  };
+  bootstrap.Modal.getInstance(document.getElementById('shipment-modal')).hide();
+
   const btn = document.getElementById('btn-export');
   btn.disabled = true;
   setStatus('生成中...');
@@ -574,7 +637,7 @@ async function doExport() {
     const res = await fetch('/api/invoices/export?ids=' + encodeURIComponent(IDS), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ form }),
+      body: JSON.stringify({ form: pendingExportForm, shipment }),
     });
     const data = await res.json();
     if (!data.ok) {

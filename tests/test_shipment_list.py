@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 import openpyxl  # noqa: E402
 
 from core.shipment_list import (  # noqa: E402
+    _containers,
     build_row,
     build_row_from_result,
     eta_for,
@@ -101,6 +102,12 @@ def main() -> None:
     check(mode_from("空运") == "AIR", "运输方式 空运→AIR")
     check(mode_from("海运") == "SEA", "运输方式 海运→SEA")
     check(mode_from("", "by Truck") == "TRUCK", "运输方式 Truck→TRUCK")
+
+    check(
+        _containers("", ["SZLU9863221/KAL0586", "PART OF 1X45HQ"])
+        == ["SZLU9863221"],
+        "柜号排除说明性文字 PART OF 1X45HQ",
+    )
 
     etd = date(2026, 10, 20)
     check(eta_for("AIR", etd) == date(2026, 10, 21), "ETA 空运 +1")
