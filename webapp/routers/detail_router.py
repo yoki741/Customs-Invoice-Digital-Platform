@@ -29,7 +29,6 @@ from ..service import (
     export_container,
     export_map_for,
     get_exporter,
-    shipment_ref_map,
 )
 from ..templates_setup import templates
 
@@ -132,8 +131,7 @@ async def detail_list(
     # 选中发票单独加载完整对象（含明细，供抬头与单价缺失提示）
     current = db.get(Invoice, invoice_id) if invoice_id else None
 
-    ref_map = shipment_ref_map(db)
-    attach_detail_extras(rows, ref_map)
+    attach_detail_extras(rows)
     current_bill_no = (export_bill_no(current) or "-") if current else "-"
     current_container = (export_container(current) or "-") if current else "-"
     current_missing_prices = _missing_prices_for_invoice(current) if current else []
@@ -231,14 +229,13 @@ async def details_export(
         .limit(20000)
         .all()
     )
-    ref_map = shipment_ref_map(db)
-    attach_detail_extras(rows, ref_map)
+    attach_detail_extras(rows)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "发票明细"
     headers = [
-        "Fabric Invoice No.", "ID", "柜号", "Invoice No.", "PO No.", "Description", "Colour",
+        "Fabric Invoice No.", "柜号", "Invoice No.", "PO No.", "Description", "Colour",
         "Size", "Fabric Type", "CARTON", "净重", "毛重", "Length",
         "Quantity", "Unit Price", "Amount", "报关净重", "报关单价",
         "报关金额", "备注",
@@ -259,7 +256,6 @@ async def details_export(
             remark_parts.append("无单价（需在表格 I 列手动填写）")
         ws.append([
             inv.invoice_no if inv else None,
-            it.ref_id or None,
             it.container_no,
             it.export_bill_no,
             it.po_no,
@@ -280,10 +276,10 @@ async def details_export(
             "；".join(remark_parts),
         ])
         if it.up == 0:
-            ws.cell(row=ws.max_row, column=18).fill = orange_fill
+            ws.cell(row=ws.max_row, column=17).fill = orange_fill
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
-    widths = [14, 12, 16, 14, 14, 40, 12, 12, 14, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 30]
+    widths = [14, 16, 14, 14, 40, 12, 12, 14, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 30]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
 

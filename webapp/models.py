@@ -217,7 +217,6 @@ class ShipmentListEntry(Base):
     pol: Mapped[str] = mapped_column(String(128), default="")
     vessel: Mapped[str] = mapped_column(String(128), default="")
     carrier: Mapped[str] = mapped_column(String(128), default="")
-    ref_id: Mapped[str] = mapped_column(String(128), default="")
     invoice_ids: Mapped[str] = mapped_column(Text, default="[]")
     created_by: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -250,7 +249,6 @@ def init_db() -> None:
         conn.exec_driver_sql("PRAGMA busy_timeout=5000")
     Base.metadata.create_all(engine)
     _migrate_check_fields()
-    _migrate_shipment_ref_id()
 
 
 def backup_db(keep: int = 30) -> Optional[Path]:
@@ -320,22 +318,6 @@ def _migrate_check_fields() -> None:
                 conn.exec_driver_sql(
                     f"ALTER TABLE export_file_versions ADD COLUMN {name} {decl}"
                 )
-
-
-def _migrate_shipment_ref_id() -> None:
-    """为已有库补上装柜列表 ref_id 列（手动填写的 ID，仅存在于数据库）。"""
-    with engine.begin() as conn:
-        existing = {
-            row[1]
-            for row in conn.exec_driver_sql(
-                "PRAGMA table_info(shipment_list_entries)"
-            ).fetchall()
-        }
-        if "ref_id" not in existing:
-            conn.exec_driver_sql(
-                "ALTER TABLE shipment_list_entries "
-                "ADD COLUMN ref_id VARCHAR(128) DEFAULT ''"
-            )
 
 
 def get_db():

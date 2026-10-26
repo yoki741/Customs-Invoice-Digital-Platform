@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import or_
@@ -344,50 +344,6 @@ async def shipment_list_download(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=path.name,
     )
-
-
-@router.post("/api/shipments/{entry_id}/ref-id")
-async def shipment_ref_id_save(
-    entry_id: int,
-    ref_id: str = Form(""),
-    month: str = Form(""),
-    company: str = Form(""),
-    mode: str = Form(""),
-    q: str = Form(""),
-    page: str = Form(""),
-    user: User = Depends(require_type1),
-    db: Session = Depends(get_db),
-) -> object:
-    """保存装柜列表某行手动填写的 ID（仅存数据库，不写入 Excel）。"""
-    from urllib.parse import urlencode
-
-    entry = db.get(ShipmentListEntry, entry_id)
-    if entry is None:
-        return JSONResponse({"ok": False, "error": "记录不存在"}, status_code=404)
-
-    entry.ref_id = (ref_id or "").strip()
-    entry.updated_at = datetime.utcnow()
-    db.commit()
-    audit(
-        db,
-        user,
-        "shipment.ref_id",
-        f"装柜 ID {entry.custom_no or entry_id} → {entry.ref_id or '(空)'}",
-    )
-
-    params = {
-        k: v
-        for k, v in (
-            ("month", month),
-            ("company", company),
-            ("mode", mode),
-            ("q", q),
-            ("page", page),
-        )
-        if v
-    }
-    query = urlencode(params)
-    return RedirectResponse(f"/shipments?{query}" if query else "/shipments", status_code=303)
 
 
 @router.post("/api/invoices/manual-save")

@@ -708,35 +708,12 @@ def company_for_price(invoice: Invoice) -> str:
     return "Eastex"
 
 
-def shipment_ref_map(db: Session) -> dict[int, str]:
-    """发票 id → 装柜列表 ref_id（第二类账号明细页反查，最新一条优先）。"""
-    mapping: dict[int, str] = {}
-    entries = (
-        db.query(ShipmentListEntry)
-        .order_by(ShipmentListEntry.id.desc())
-        .all()
-    )
-    for entry in entries:
-        if not entry.ref_id:
-            continue
-        try:
-            ids = [int(i) for i in json.loads(entry.invoice_ids or "[]")]
-        except (TypeError, ValueError):
-            continue
-        for i in ids:
-            mapping.setdefault(i, entry.ref_id)
-    return mapping
-
-
-def attach_detail_extras(
-    rows: list, ref_map: Optional[dict[int, str]] = None
-) -> None:
+def attach_detail_extras(rows: list) -> None:
     """给明细行附加导出口径数据（供明细页展示）。
 
     附加属性：
         export_bill_no  提单号
         container_no    集装箱柜号
-        ref_id          所属装柜手动填写的 ID
         cw              报关净重 = 净重 × 运输比例
         up              单价（价格表查询；None=无面料类型，0.0=未查到）
         ca              报关金额 = cw × up
@@ -745,12 +722,10 @@ def attach_detail_extras(
     from core.price_table import lookup_price, weight_ratio
     from core.source_reader import EXPORT_FIRST_ROW, EXPORT_LAST_ROW
 
-    ref_map = ref_map or {}
     exporter = get_exporter()
     for item in rows:
         item.export_bill_no = "-"
         item.container_no = ""
-        item.ref_id = ""
         item.cw = None
         item.up = None
         item.ca = None
@@ -758,7 +733,6 @@ def attach_detail_extras(
         invoice = item.invoice
         if invoice is None:
             continue
-        item.ref_id = ref_map.get(invoice.id, "")
         ratio = weight_ratio(invoice.ship_mode)
         item.export_bill_no = export_bill_no(invoice)
         item.container_no = export_container(invoice)

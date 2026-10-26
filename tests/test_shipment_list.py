@@ -196,32 +196,6 @@ def main() -> None:
         wb.close()
     out.unlink(missing_ok=True)
 
-    # --- 装柜列表 ref_id → 发票明细反查映射 ---
-    from sqlalchemy import create_engine as _create_engine
-    from sqlalchemy.orm import sessionmaker as _sessionmaker
-
-    from webapp.models import Base as _Base, ShipmentListEntry as _SLE
-    from webapp.service import shipment_ref_map as _shipment_ref_map
-
-    _engine = _create_engine("sqlite://")
-    _Base.metadata.create_all(_engine)
-    _Session = _sessionmaker(bind=_engine)
-    _db = _Session()
-    _db.add_all([
-        _SLE(custom_no="A_CT", ref_id="ID-100", invoice_ids="[1,2]"),
-        _SLE(custom_no="B_BT", ref_id="ID-200", invoice_ids="[3]"),
-        _SLE(custom_no="C_CT", ref_id="", invoice_ids="[4]"),
-        _SLE(custom_no="D_CT", ref_id="ID-NEW", invoice_ids="[1]"),
-    ])
-    _db.commit()
-    _m = _shipment_ref_map(_db)
-    check(_m.get(1) == "ID-NEW", "ref_id 反查：同发票取最新一条")
-    check(_m.get(2) == "ID-100", "ref_id 反查：按发票 id 映射")
-    check(_m.get(3) == "ID-200", "ref_id 反查：另一票映射")
-    check(_m.get(4) is None, "ref_id 反查：未填 ID 不映射")
-    _db.close()
-    _engine.dispose()
-
     if fails:
         print(f"\n失败 {len(fails)} 项")
         raise SystemExit(1)

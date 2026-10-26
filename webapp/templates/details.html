@@ -109,7 +109,6 @@
         <thead>
           <tr>
             <th>Fabric Invoice No.</th>
-            <th>ID</th>
             <th>柜号</th>
             <th>Invoice No.</th>
             <th>PO No.</th>
@@ -133,7 +132,6 @@
           {% for it in rows %}
           <tr>
             <td class="small">{{ it.invoice.invoice_no if it.invoice else '-' }}</td>
-            <td class="small fw-semibold">{{ it.ref_id or '-' }}</td>
             <td class="small">{{ it.container_no or '-' }}</td>
             <td class="small fw-semibold">{{ it.export_bill_no or '-' }}</td>
             <td class="small">{{ it.po_no or '-' }}</td>
@@ -158,7 +156,7 @@
             <td class="num">{{ '%.2f' % it.ca if it.ca else '-' }}{% if not it.in_export %}*{% endif %}</td>
           </tr>
           {% else %}
-          <tr><td colspan="18" class="text-center text-muted py-4">暂无明细数据</td></tr>
+          <tr><td colspan="17" class="text-center text-muted py-4">暂无明细数据</td></tr>
           {% endfor %}
         </tbody>
       </table>

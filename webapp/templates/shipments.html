@@ -68,7 +68,6 @@
             <th>Shipper</th>
             <th>EST/VCO</th>
             <th>Custom #</th>
-            <th>ID</th>
             <th class="num">Package</th>
             <th>Blading</th>
             <th>Container 1</th>
@@ -95,19 +94,6 @@
             <td>{{ r.shipper or '-' }}</td>
             <td>{{ r.est_vco or '-' }}</td>
             <td class="small text-nowrap">{{ r.custom_no or '-' }}</td>
-            <td class="small">
-              <form method="post" action="/api/shipments/{{ r.id }}/ref-id"
-                    class="d-flex gap-1 align-items-center">
-                <input type="hidden" name="month" value="{{ month }}">
-                <input type="hidden" name="company" value="{{ company }}">
-                <input type="hidden" name="mode" value="{{ mode }}">
-                <input type="hidden" name="q" value="{{ q }}">
-                <input type="hidden" name="page" value="{{ page }}">
-                <input class="form-control form-control-sm ref-id-input" name="ref_id"
-                       value="{{ r.ref_id or '' }}" placeholder="填 ID">
-                <button class="btn btn-sm btn-outline-primary text-nowrap" type="submit">保存</button>
-              </form>
-            </td>
             <td class="num">{{ r.package if r.package is not none else '-' }}</td>
             <td class="small text-nowrap">{{ r.blading or '-' }}</td>
             <td class="small">{{ r.container_1 or '-' }}</td>
@@ -134,7 +120,7 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="22" class="text-center text-muted py-4">
+            <td colspan="21" class="text-center text-muted py-4">
               暂无装柜列表。在发票列表选择发票，点击“合并编辑 / 导出”生成 .xlsm 后会自动汇总到这里。
             </td>
           </tr>
