@@ -10,12 +10,29 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, noload
 
+from core.config import DEFAULT_ROLE, ROLE_GROUP_MAP, SSO_MODE
+
 from ..auth import ROLE_ALL, audit, hash_password, require_admin, require_csrf, require_type1
 from ..importer import import_source_file, save_upload, scan_uploads
 from ..models import ROLE_LABELS, AuditLog, ExportJob, Invoice, User, get_db
 from ..templates_setup import templates
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _role_group_hint() -> str:
+    """生成「统一登录组 → 角色」说明文案。
+
+    Returns:
+        str: 形如 ``"/customs-invoice-admin → 管理员；..."`` 的文案，
+        未配置任何映射时返回空串。
+    """
+    parts = []
+    for role in ("admin", "type1", "type2"):
+        groups = [path for path, mapped in ROLE_GROUP_MAP if mapped == role]
+        if groups:
+            parts.append(f"{' / '.join(groups)} → {ROLE_LABELS.get(role, role)}")
+    return "；".join(parts)
 
 
 def _flash(request: Request, level: str, message: str) -> None:
@@ -85,6 +102,9 @@ async def user_list(
         request,
         "admin_users.html",
         {"user": user, "rows": rows, "role_labels": ROLE_LABELS,
+         "role_locked": SSO_MODE,
+         "role_group_hint": _role_group_hint() if SSO_MODE else "",
+         "default_role": DEFAULT_ROLE,
          "error": request.session.pop("flash_error", ""),
          "flash": request.session.pop("flash", None)},
     )
@@ -139,6 +159,16 @@ async def user_role(
     db: Session = Depends(get_db),
 ) -> object:
     require_csrf(request, csrf)
+    if SSO_MODE:
+        # 统一登录模式下组映射是角色权威源，这里改完会被下次请求覆盖，
+        # 因此直接拒绝并提示去 Keycloak 调整组成员。
+        _flash(
+            request,
+            "warning",
+            "统一登录模式下角色由 Keycloak 组决定，请在统一登录管理后台调整组成员"
+            "（改动后刷新页面即生效）",
+        )
+        return RedirectResponse("/admin/users", status_code=303)
     target = db.get(User, user_id)
     if target and role in ROLE_ALL:
         old = target.role

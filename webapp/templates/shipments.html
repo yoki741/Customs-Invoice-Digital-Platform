@@ -7,7 +7,7 @@
 
 <div class="card no-print">
   <div class="card-body py-2">
-    <form class="row g-2 align-items-end" method="get" action="/shipments">
+    <form class="row g-2 align-items-end" method="get" action="{{ prefix }}/shipments">
       <div class="col-6 col-md-2">
         <label class="form-label">月份</label>
         <select class="form-select form-select-sm" name="month">
@@ -42,7 +42,7 @@
       </div>
       <div class="col-auto">
         <button class="btn btn-primary btn-sm">筛选</button>
-        <a class="btn btn-outline-secondary btn-sm" href="/shipments">重置</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ prefix }}/shipments">重置</a>
       </div>
       <div class="col-auto ms-auto">
         {% if download_url %}
@@ -96,7 +96,7 @@
             <td>{{ r.est_vco or '-' }}</td>
             <td class="small text-nowrap">{{ r.custom_no or '-' }}</td>
             <td class="small">
-              <form method="post" action="/api/shipments/{{ r.id }}/ref-id"
+              <form method="post" action="{{ prefix }}/api/shipments/{{ r.id }}/ref-id"
                     class="d-flex gap-1 align-items-center">
                 <input type="hidden" name="month" value="{{ month }}">
                 <input type="hidden" name="company" value="{{ company }}">
@@ -149,11 +149,11 @@
     <div>
       {% if page > 1 %}
       <a class="btn btn-sm btn-outline-secondary"
-         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page - 1 }}">上一页</a>
+         href="{{ prefix }}/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page - 1 }}">上一页</a>
       {% endif %}
       {% if page < pages %}
       <a class="btn btn-sm btn-outline-secondary"
-         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page + 1 }}">下一页</a>
+         href="{{ prefix }}/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page + 1 }}">下一页</a>
       {% endif %}
     </div>
   </div>

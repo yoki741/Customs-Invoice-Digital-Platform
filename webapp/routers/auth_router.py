@@ -12,10 +12,13 @@ from fastapi.responses import RedirectResponse
 from loguru import logger
 from sqlalchemy.orm import Session
 
+from core.config import SSO_MODE
 from ..auth import (
     audit,
     get_user,
     hash_password,
+    login_redirect_url,
+    portal_logout_url,
     require_csrf,
     require_user,
     verify_password,
@@ -84,13 +87,17 @@ async def login_page(
     next: str = "",
     user: Optional[User] = Depends(get_user),
 ) -> object:
-    # 已通过 Header 透传或会话登录的用户直接进首页
+    next_url = _safe_next(next)
+    # 已认证（可信代理身份或会话）直接回首页
     if user is not None:
         return RedirectResponse("/", status_code=303)
+    if SSO_MODE:
+        # 统一登录模式没有本地登录页，交给 oauth2-proxy 发起 Keycloak 登录
+        return RedirectResponse(login_redirect_url(next_url), status_code=303)
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"next": _safe_next(next), "error": request.session.pop("flash_error", "")},
+        {"next": next_url, "error": request.session.pop("flash_error", "")},
     )
 
 
@@ -102,23 +109,23 @@ async def login(
     next: str = Form(""),
     db: Session = Depends(get_db),
 ) -> object:
+    if SSO_MODE:
+        # 统一登录模式下不接受本地口令，避免绕过 Portal 的账号策略
+        return RedirectResponse(login_redirect_url(_safe_next(next)), status_code=303)
+
     ip = request.client.host if request.client else "unknown"
     fail_key = f"{ip}|{username.strip()}"
     if _login_blocked(fail_key):
         request.session["flash_error"] = "登录失败次数过多，请 1 分钟后再试"
         logger.warning("登录限流拦截: {}", fail_key)
-        return RedirectResponse(
-            f"/login?next={_safe_next(next)}", status_code=303
-        )
+        return RedirectResponse(login_redirect_url(_safe_next(next)), status_code=303)
 
     name = username.strip()
     user: Optional[User] = db.query(User).filter(User.username == name).one_or_none()
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
         _record_login_fail(fail_key)
         request.session["flash_error"] = "用户名或密码错误，或账号已停用"
-        return RedirectResponse(
-            f"/login?next={_safe_next(next)}", status_code=303
-        )
+        return RedirectResponse(login_redirect_url(_safe_next(next)), status_code=303)
 
     _clear_login_fails(fail_key)
     request.session.clear()
@@ -129,12 +136,20 @@ async def login(
 
 @router.get("/logout")
 async def logout(request: Request, db: Session = Depends(get_db)) -> object:
+    """登出。
+
+    统一登录模式下只清本地会话是不够的：下一个请求会被 Portal 重新注入身份
+    （JIT 又把账号"登录"回来）。因此必须走 Portal 的完整登出链——
+    oauth2-proxy 清 cookie → Keycloak 结束 SSO 会话 → 回首页。
+    """
     uid = request.session.get("uid")
     if uid:
         user = db.get(User, uid)
         if user:
             audit(db, user, "logout", f"{user.username} 登出")
     request.session.clear()
+    if SSO_MODE:
+        return RedirectResponse(portal_logout_url(), status_code=302)
     return RedirectResponse("/login", status_code=303)
 
 
@@ -148,6 +163,22 @@ async def change_password_page(
     request: Request,
     user: User = Depends(require_user),
 ) -> object:
+    if SSO_MODE:
+        return templates.TemplateResponse(
+            request,
+            "message.html",
+            {
+                "user": user,
+                "level": "info",
+                "title": "密码由统一登录管理",
+                "message": (
+                    "本平台已接入企业统一登录（Keycloak）。"
+                    "如需修改密码，请在 Portal 首页右上角的账号菜单中操作，"
+                    "或联系系统管理员重置。"
+                ),
+                "back": "/",
+            },
+        )
     return templates.TemplateResponse(
         request,
         "change_password.html",
@@ -169,6 +200,9 @@ async def change_password(
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ) -> object:
+    if SSO_MODE:
+        # 口令由 Keycloak 统一托管，本地改密会让两处不一致
+        return RedirectResponse("/change-password", status_code=303)
     require_csrf(request, csrf)
 
     def fail(msg: str) -> object:

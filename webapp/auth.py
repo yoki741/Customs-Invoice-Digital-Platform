@@ -1,18 +1,31 @@
 # -*- coding: utf-8 -*-
 """认证、权限依赖与日志。
 
-支持两种认证来源：
-1. Header 透传（生产，经 nginx）：X-Internal-Token 校验共享密钥 +
-   X-Remote-User 提供用户名；首次访问自动建号（JIT），角色默认 type2
-   或取 X-Remote-Role 提示。已有账号的角色以本系统「账号管理」为准。
-2. 本地会话登录（开发 / 直连8000）：用户名密码 + session cookie。
+支持两种认证来源（由 ``CUSTOMS_AUTH_MODE`` 选择，见 core/config.py）：
+
+1. ``sso``（生产，经 DTD_nginx Portal）：Nginx + oauth2-proxy + Portal
+   Authorizer 认证后注入 ``Remote-Subject`` / ``Remote-User`` /
+   ``Remote-Groups`` / ``Remote-Display-Name``；首次访问自动建号（JIT）。
+   角色由 Keycloak 组决定（``CUSTOMS_ROLE_GROUPS``，默认
+   ``/admin`` 与 ``/customs-invoice-admin`` → admin、
+   ``/customs-invoice-type1`` → type1、``/apps/customs-invoice`` → type2），
+   命中即同步进 ``users.role``；未命中任何组时沿用库内角色（不降级），
+   新账号则用 ``CUSTOMS_DEFAULT_ROLE``（默认 type2）。本模式下不提供
+   账号密码登录，登出交由 Portal 统一单点登出。
+2. ``local``（开发 / 直连 8000）：用户名密码 + session cookie。
+
+无论哪种模式，``users`` 表都只承载业务档案（业务角色、显示名、部门、停用开关），
+不做统一身份源。
 """
 
 from __future__ import annotations
 
+import json
 import re
+import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlencode
 
 import secrets
 
@@ -22,17 +35,24 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from core.config import (
-    HEADER_AUTH_SECRET_PATH,
+    DEFAULT_ROLE,
     LOG_DIR,
+    OAUTH2_SIGNOUT_URL,
+    PORTAL_LOGOUT_API,
+    ROLE_SYNC,
     SECRET_KEY_PATH,
+    SSO_LOGIN_URL,
+    SSO_MODE,
     ensure_dirs,
+    resolve_role_from_groups,
 )
 from .models import ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2, User, get_db
 
 ROLE_ALL = (ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2)
 
-# Header 透传的用户名允许字符（防日志注入等）
-_HEADER_USER_RE = re.compile(r"^[\w.\-@一-鿿]{1,64}$")
+# Remote-User 允许字符（防日志注入、防伪造成非法用户名）
+_REMOTE_USER_RE = re.compile(r"^[\w.\-@一-鿿]{1,64}$")
+
 
 
 class LoginRequired(Exception):
@@ -116,73 +136,178 @@ def get_secret_key() -> str:
     return key
 
 
-def get_header_auth_secret() -> str:
-    """Header 认证共享密钥，首次运行自动生成；nginx 配置需与此一致。"""
-    ensure_dirs()
-    if HEADER_AUTH_SECRET_PATH.exists():
-        return HEADER_AUTH_SECRET_PATH.read_text(encoding="utf-8").strip()
-    key = secrets.token_urlsafe(32)
-    HEADER_AUTH_SECRET_PATH.write_text(key, encoding="utf-8")
-    try:
-        HEADER_AUTH_SECRET_PATH.chmod(0o600)
-    except OSError:
-        pass
-    return key
+# ---- 登录入口 / 登出（与 Portal 对接） ----
 
 
-# ---- Header 透传认证（nginx） ----
+def wants_html(request: Request) -> bool:
+    """判断请求是否期望 HTML（浏览器导航）而不是 API JSON。
 
+    Args:
+        request (Request): 当前请求。
 
-def _header_auth_user(request: Request, db: Session) -> Optional[User]:
-    """校验 nginx 注入的认证 header，JIT 开通账号。
-
-    返回 None 表示本次请求不走 header 认证（无 token / token 错 /
-    无用户名 / 用户名非法 / 用户被停用），回落到会话认证。
+    Returns:
+        bool: 浏览器页面请求返回 True。
     """
-    token = request.headers.get("X-Internal-Token", "")
-    if not token:
-        return None
-    if not secrets.compare_digest(token, get_header_auth_secret()):
-        logger.warning(
-            "Header 认证 token 不匹配，来源 {}",
-            request.client.host if request.client else "?",
+    if request.url.path.startswith("/api/"):
+        return False
+    return "text/html" in request.headers.get("accept", "")
+
+
+def login_redirect_url(next_url: str = "") -> str:
+    """生成未认证时的跳转地址。
+
+    Args:
+        next_url (str): 登录后要回到的应用内路径（不含子路径前缀）。
+
+    Returns:
+        str: SSO 模式返回 oauth2-proxy 登录入口；本地模式返回应用登录页。
+    """
+    target = next_url if next_url.startswith("/") else "/"
+    if SSO_MODE:
+        # /oauth2/ 属于 Portal 根路径，PrefixMiddleware 不会再补子路径前缀
+        return f"{SSO_LOGIN_URL}?{urlencode({'rd': target})}"
+    return f"/login?{urlencode({'next': target})}"
+
+
+def portal_logout_url() -> str:
+    """向 Portal 申请完整登出链（oauth2-proxy → Keycloak → 首页）。
+
+    服务端直接调用 Portal 的 ``POST /api/auth/logout/``：该请求不带会话
+    Cookie，Portal 按匿名请求处理并返回可用的 redirect_url，因此不需要
+    在本平台重复维护 Keycloak 地址与 client_id。Portal 不可用时回落到
+    oauth2-proxy 的 sign_out。
+
+    Returns:
+        str: 浏览器应跳转的登出地址。
+    """
+    try:
+        # 地址为内部固定配置，不接收用户输入。
+        logout_request = urllib.request.Request(  # noqa: S310
+            PORTAL_LOGOUT_API, data=b"", method="POST"
         )
+        with urllib.request.urlopen(logout_request, timeout=3) as response:  # noqa: S310
+            payload = json.loads(response.read(4096).decode("utf-8"))
+        redirect_url = str(payload.get("redirect_url") or "").strip()
+        if redirect_url.startswith(("http://", "https://", "/")):
+            return redirect_url
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("获取 Portal 登出链失败，改用 oauth2-proxy 兜底: {}", exc)
+    return OAUTH2_SIGNOUT_URL
+
+
+# ---- 可信代理身份（Remote-* header） ----
+
+
+def _resolve_role(groups: frozenset[str] | set[str]) -> tuple[str, str]:
+    """按统一登录组映射解析本平台角色。
+
+    ``ROLE_GROUP_MAP`` 已按权限从高到低排列（admin > type1 > type2），
+    因此第一个命中的组即为最高权限角色。组值兼容三种写法
+    （``/admin``、``admin``、嵌套组叶子名 ``customs-invoice``），
+    因为现网 Keycloak 的 ``groups`` mapper 配置为 ``full.path=false``。
+
+    Args:
+        groups (set[str]): ``Remote-Groups`` 解析出的组值集合。
+
+    Returns:
+        tuple[str, str]: ``(角色, 命中的组路径)``；未命中任何组时返回
+        ``("", "")``，表示本次身份不携带角色决定，交由调用方沿用库内角色。
+    """
+    return resolve_role_from_groups(groups)
+
+
+def _remote_user(request: Request, db: Session) -> Optional[User]:
+    """解析 Nginx 注入的 Remote-* 身份，必要时 JIT 开通账号。
+
+    返回 None 表示本次请求没有可信身份（无 header / 用户名非法 / 已停用），
+    由调用方回落到本地会话认证。
+
+    Args:
+        request (Request): 当前请求。
+        db (Session): 数据库会话。
+
+    Returns:
+        Optional[User]: 匹配或新建的用户对象。
+    """
+    subject = request.headers.get("Remote-Subject", "").strip()
+    username = request.headers.get("Remote-User", "").strip()
+    if not username or not _REMOTE_USER_RE.match(username):
+        if subject or username:
+            logger.warning(
+                "可信代理身份缺失或非法: subject={!r} user={!r}", subject, username
+            )
         return None
 
-    username = request.headers.get("X-Remote-User", "").strip()
-    if not username or not _HEADER_USER_RE.match(username):
-        logger.warning("Header 认证用户名缺失或非法: {!r}", username)
-        return None
+    groups = {
+        item.strip()
+        for item in request.headers.get("Remote-Groups", "").split(",")
+        if item.strip()
+    }
+    display_name = (
+        request.headers.get("Remote-Display-Name", "")
+        or request.headers.get("Remote-Name", "")
+    ).strip()
+
+    # 统一登录组是角色权威源：命中哪一组就是哪一类账号。
+    group_role, matched_group = _resolve_role(groups)
 
     user = db.query(User).filter(User.username == username).one_or_none()
     if user is None:
-        # JIT 开通：角色取 header 提示，不认识则默认 type2；
-        # 已有账号一律以库内角色为准（管理员可在账号管理调整）。
-        hint = request.headers.get("X-Remote-Role", "").strip().lower()
-        role = hint if hint in ROLE_ALL else ROLE_TYPE2
+        # JIT 开通：命中组映射则用命中角色，否则用默认角色（type2，仅查看明细）
+        role = group_role or DEFAULT_ROLE
         user = User(
             username=username,
             password_hash=hash_password(secrets.token_urlsafe(16)),
             role=role,
-            display_name=username,
+            display_name=display_name[:64] or username,
         )
         db.add(user)
         db.commit()
-        audit(db, user, "jit.provision", f"Header 认证自动开通账号（角色 {role}）")
-        logger.info("Header 认证 JIT 开通账号: {} ({})", username, role)
+        audit(
+            db,
+            user,
+            "jit.provision",
+            f"统一登录自动开通账号（角色 {role}，"
+            f"来源 {matched_group or '默认'}，subject {subject or '-'}）",
+        )
+        logger.info(
+            "统一登录 JIT 开通账号: {} ({}, 组 {})",
+            username,
+            role,
+            matched_group or "默认",
+        )
+    elif ROLE_SYNC and group_role and user.role != group_role:
+        # 组映射命中即同步：Keycloak 改组成员后刷新即生效，无需进本平台后台。
+        old_role = user.role
+        user.role = group_role
+        db.commit()
+        audit(
+            db,
+            user,
+            "role.sync",
+            f"统一登录组 {matched_group} 决定角色: {old_role} -> {group_role}",
+        )
+        logger.info(
+            "统一登录组同步角色: {} {} -> {}（组 {}）",
+            username,
+            old_role,
+            group_role,
+            matched_group,
+        )
     if not user.is_active:
-        logger.warning("Header 认证用户已被停用: {}", username)
+        logger.warning("统一登录用户已被停用: {}", username)
         return None
     return user
+
 
 
 # ---- 权限依赖 ----
 
 
 def get_user(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
-    """解析当前登录用户：优先 Header 透传，回落到会话。"""
-    # 1. nginx 透传（生产）
-    user = _header_auth_user(request, db)
+    """解析当前登录用户：优先可信代理身份，回落到本地会话。"""
+    # 1. Nginx + oauth2-proxy + Portal 注入的 Remote-*（生产）
+    user = _remote_user(request, db)
     if user is not None:
         # 同步 session，供 CSRF / 审计 / 侧栏角标等复用
         if request.session.get("uid") != user.id:

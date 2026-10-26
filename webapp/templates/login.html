@@ -15,7 +15,7 @@
         {% if error %}
         <div class="alert alert-danger py-2">{{ error }}</div>
         {% endif %}
-        <form method="post" action="/login">
+        <form method="post" action="{{ prefix }}/login">
           <input type="hidden" name="next" value="{{ next }}">
           <div class="mb-3">
             <label class="form-label">账号</label>

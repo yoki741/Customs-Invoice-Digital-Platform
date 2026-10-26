@@ -21,7 +21,7 @@
 
 <div class="card no-print">
   <div class="card-body py-2">
-    <form method="get" action="/files" class="d-flex gap-2">
+    <form method="get" action="{{ prefix }}/files" class="d-flex gap-2">
       <input class="form-control form-control-sm" name="q" value="{{ q }}"
              placeholder="按文件名 / 提单号 / 操作人搜索" style="max-width:360px">
       <button class="btn btn-primary btn-sm">搜索</button>
@@ -56,7 +56,7 @@
                       onclick="previewFile('{{ g.folder }}', '{{ g.filename }}')">预览</button>
               <button class="btn btn-sm btn-outline-info py-0"
                       onclick="showHistory('{{ g.folder }}', '{{ g.filename }}')">修改记录</button>
-              {% set dl = '/api/download?folder=' ~ g.folder ~ '&name=' ~ g.filename %}
+              {% set dl = prefix ~ '/api/download?folder=' ~ g.folder ~ '&name=' ~ g.filename %}
               <a class="btn btn-sm btn-outline-secondary py-0" href="{{ dl }}">下载</a>
             </td>
           </tr>
@@ -72,10 +72,10 @@
     <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
     <div>
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/files?q={{ q }}&page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ prefix }}/files?q={{ q }}&page={{ page - 1 }}">上一页</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/files?q={{ q }}&page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ prefix }}/files?q={{ q }}&page={{ page + 1 }}">下一页</a>
       {% endif %}
     </div>
   </div>
@@ -123,10 +123,10 @@ function ensureUniver() {
   univerLoading = new Promise((resolve, reject) => {
     const css = document.createElement('link');
     css.rel = 'stylesheet';
-    css.href = '/static/vendor/univer.css';
+    css.href = '{{ prefix }}/static/vendor/univer.css';
     document.head.appendChild(css);
     const s = document.createElement('script');
-    s.src = '/static/vendor/univer.js';
+    s.src = '{{ prefix }}/static/vendor/univer.js';
     s.onload = resolve;
     s.onerror = () => reject(new Error('Univer 组件加载失败'));
     document.head.appendChild(s);
@@ -139,7 +139,7 @@ async function previewFile(folder, name) {
   title.textContent = '加载中...';
   let res;
   try {
-    res = await fetch('/api/files/preview?folder=' + encodeURIComponent(folder) +
+    res = await fetch('{{ prefix }}/api/files/preview?folder=' + encodeURIComponent(folder) +
                       '&name=' + encodeURIComponent(name));
   } catch (err) {
     alert('预览请求失败: ' + err);
@@ -200,7 +200,7 @@ async function showHistory(folder, name) {
   historyModal.show();
   let res;
   try {
-    res = await fetch('/api/files/history?folder=' + encodeURIComponent(folder) +
+    res = await fetch('{{ prefix }}/api/files/history?folder=' + encodeURIComponent(folder) +
                       '&name=' + encodeURIComponent(name));
   } catch (err) {
     body.innerHTML = '<div class="text-danger small">加载失败: ' + err + '</div>';
