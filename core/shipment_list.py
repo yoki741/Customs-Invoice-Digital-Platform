@@ -23,7 +23,7 @@ from .source_reader import SourceData
 
 SHEET_NAME = "Sheet1"
 FIRST_DATA_ROW = 2
-EXPECTED_COLS = 20
+EXPECTED_COLS = 22
 
 _CONTAINER_RE = re.compile(r"[A-Z]{4}\d{7}")
 # 兜底分支用于分隔符拆分的柜号，需形如柜号（4 字母 + 7 位，或旧式 3 字母 + 6 位），
@@ -64,6 +64,8 @@ class ShipmentRow:
     pol: str = ""
     vessel: str = ""
     carrier: str = ""
+    container_type: str = ""
+    cbm: Optional[float] = None
 
     def cells(self) -> list[Any]:
         """按模板 A-T 列返回单元格值。"""
@@ -89,6 +91,8 @@ class ShipmentRow:
                 self.pol,
                 self.vessel,
                 self.carrier,
+                self.container_type,
+                self.cbm,
             ]
         )
         return values
@@ -116,6 +120,8 @@ class ShipmentRow:
             "pol": self.pol,
             "vessel": self.vessel,
             "carrier": self.carrier,
+            "container_type": self.container_type,
+            "cbm": self.cbm,
         }
 
 
@@ -376,7 +382,7 @@ def build_row_from_result(
     - Fty Inv = INV1 REF 行，POL = INV1!A18（陆运 A19）
     - 分类 = INV1 D 列，集装箱 = INV1 CONTAINER 区
     - 净重 = 报关净重（传入 customs_weight），毛重 = PKL1!K24
-    - Package / ETD / VESSEL / Carrier 为手动字段，留空供人工补齐
+    - Package / ETD / VESSEL / Carrier / 柜型 / CBM 为手动字段，留空供人工补齐
     """
     ws_inv1 = workbook["INV1"]
 
@@ -415,6 +421,8 @@ def build_row_from_result(
         pol=pol,
         vessel="",
         carrier="",
+        container_type="",
+        cbm=None,
     )
 
 

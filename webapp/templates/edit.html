@@ -131,13 +131,21 @@
             <label class="form-label small mb-1">ETA 预计到港</label>
             <input type="date" class="form-control form-control-sm" id="sm-eta">
           </div>
-          <div class="col-12">
+          <div class="col-6">
             <label class="form-label small mb-1">Carrier 货代</label>
             <input type="text" class="form-control form-control-sm" id="sm-carrier">
           </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">柜型 Container Type</label>
+            <input type="text" class="form-control form-control-sm" id="sm-container-type" placeholder="如 40HQ">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">CBM 体积</label>
+            <input type="number" step="any" min="0" class="form-control form-control-sm" id="sm-cbm">
+          </div>
         </div>
         <div class="small text-muted mt-2">
-          这 5 项会写入当月装柜列表；留空则暂时不填，之后可在 Excel 里补。
+          这些项会写入当月装柜列表；留空则暂时不填，之后可在 Excel 里补。
         </div>
       </div>
       <div class="modal-footer py-2">
@@ -614,7 +622,8 @@ async function doExport() {
   }
   pendingExportForm = form;
   // 清空弹窗残留，避免带入上一次导出的值
-  ['sm-package', 'sm-etd', 'sm-eta', 'sm-vessel', 'sm-carrier'].forEach(id => {
+  ['sm-package', 'sm-etd', 'sm-eta', 'sm-vessel', 'sm-carrier',
+   'sm-container-type', 'sm-cbm'].forEach(id => {
     document.getElementById(id).value = '';
   });
   bootstrap.Modal.getOrCreateInstance(document.getElementById('shipment-modal')).show();
@@ -627,6 +636,8 @@ async function confirmExport() {
     eta: document.getElementById('sm-eta').value.trim(),
     vessel: document.getElementById('sm-vessel').value.trim(),
     carrier: document.getElementById('sm-carrier').value.trim(),
+    container_type: document.getElementById('sm-container-type').value.trim(),
+    cbm: document.getElementById('sm-cbm').value.trim(),
   };
   bootstrap.Modal.getInstance(document.getElementById('shipment-modal')).hide();
 

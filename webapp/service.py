@@ -379,6 +379,13 @@ def _apply_shipment_overrides(row: ShipmentRow, raw: dict[str, Any]) -> None:
         row.vessel = _s("vessel")
     if _s("carrier"):
         row.carrier = _s("carrier")
+    if _s("container_type"):
+        row.container_type = _s("container_type")
+    if _s("cbm"):
+        try:
+            row.cbm = float(_s("cbm"))
+        except (TypeError, ValueError):
+            pass
 
 
 def export_invoices(
@@ -553,6 +560,8 @@ def _entry_to_row(entry: ShipmentListEntry) -> ShipmentRow:
         pol=entry.pol or "",
         vessel=entry.vessel or "",
         carrier=entry.carrier or "",
+        container_type=entry.container_type or "",
+        cbm=entry.cbm,
     )
 
 

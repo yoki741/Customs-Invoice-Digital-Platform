@@ -184,9 +184,14 @@ def main() -> None:
         check(res_row.package is None, "Package 留空待人工")
         check(res_row.etd is None and res_row.eta is None, "ETD/ETA 留空")
         check(res_row.vessel == "" and res_row.carrier == "", "VESSEL/Carrier 留空")
+        check(res_row.container_type == "" and res_row.cbm is None, "柜型/CBM 留空待人工")
     finally:
         res_wb.close()
 
+    check(len(row.cells()) == 22, "cells() 返回 22 列")
+
+    row.container_type = "40HQ"
+    row.cbm = 45.5
     out = Path(tempfile.gettempdir()) / "shipment_list_test.xlsx"
     write_workbook([row, row_eastex], out)
     wb = openpyxl.load_workbook(out)
@@ -199,6 +204,10 @@ def main() -> None:
         check(ws["A6"].value is None, "模板说明行已清空，避免与数据冲突")
         check("mmm" in ws["A2"].number_format, "日期格式沿用模板")
         check(ws["A2"].border.left.style == "thin", "边框沿用模板")
+        check(ws["U1"].value == "Container Type" and ws["V1"].value == "CBM",
+              "新列表头 柜型/CBM")
+        check(ws["U2"].value == "40HQ" and ws["V2"].value == 45.5,
+              "第 2 行写入柜型/CBM")
     finally:
         wb.close()
     out.unlink(missing_ok=True)

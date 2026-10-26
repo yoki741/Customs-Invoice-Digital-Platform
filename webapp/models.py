@@ -217,6 +217,8 @@ class ShipmentListEntry(Base):
     pol: Mapped[str] = mapped_column(String(128), default="")
     vessel: Mapped[str] = mapped_column(String(128), default="")
     carrier: Mapped[str] = mapped_column(String(128), default="")
+    container_type: Mapped[str] = mapped_column(String(64), default="")
+    cbm: Mapped[Optional[float]] = mapped_column(Float)
     invoice_ids: Mapped[str] = mapped_column(Text, default="[]")
     created_by: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -249,6 +251,7 @@ def init_db() -> None:
         conn.exec_driver_sql("PRAGMA busy_timeout=5000")
     Base.metadata.create_all(engine)
     _migrate_check_fields()
+    _migrate_shipment_fields()
 
 
 def backup_db(keep: int = 30) -> Optional[Path]:
@@ -317,6 +320,25 @@ def _migrate_check_fields() -> None:
             if name not in existing:
                 conn.exec_driver_sql(
                     f"ALTER TABLE export_file_versions ADD COLUMN {name} {decl}"
+                )
+
+
+def _migrate_shipment_fields() -> None:
+    """为已有 shipment_list_entries 表补上柜型 / CBM 列（SQLite ALTER ADD COLUMN）。"""
+    with engine.begin() as conn:
+        existing = {
+            row[1]
+            for row in conn.exec_driver_sql(
+                "PRAGMA table_info(shipment_list_entries)"
+            ).fetchall()
+        }
+        for name, decl in (
+            ("container_type", "VARCHAR(64) DEFAULT ''"),
+            ("cbm", "FLOAT"),
+        ):
+            if name not in existing:
+                conn.exec_driver_sql(
+                    f"ALTER TABLE shipment_list_entries ADD COLUMN {name} {decl}"
                 )
 
 
