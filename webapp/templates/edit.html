@@ -7,7 +7,7 @@
 {% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="/static/vendor/univer.css">
+<link rel="stylesheet" href="{{ prefix }}/static/vendor/univer.css">
 <style>
   #grid {
     width: 100%;
@@ -107,7 +107,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/vendor/univer.js"></script>
+<script src="{{ prefix }}/static/vendor/univer.js"></script>
 <script>
 const IDS = {{ ids | tojson }};
 // 记住本次编辑的发票，发票列表页可一键继续编辑
@@ -398,7 +398,7 @@ async function saveManual(force) {
   const form = collectForm();
   setStatus('保存中...');
   try {
-    const res = await fetch('/api/invoices/manual-save?ids=' + encodeURIComponent(IDS), {
+    const res = await fetch('{{ prefix }}/api/invoices/manual-save?ids=' + encodeURIComponent(IDS), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ form, last_saved_at: (META && META.last_saved_at) || '', force: !!force }),
@@ -478,7 +478,7 @@ function clearDraft() {
 
 async function loadSnapshot() {
   setStatus('加载模板中...');
-  const res = await fetch('/api/invoices/snapshot?ids=' + encodeURIComponent(IDS));
+  const res = await fetch('{{ prefix }}/api/invoices/snapshot?ids=' + encodeURIComponent(IDS));
   const data = await res.json();
   if (!data.ok) {
     setStatus(data.error || '加载失败', 'text-danger');
@@ -571,7 +571,7 @@ async function doExport() {
   btn.disabled = true;
   setStatus('生成中...');
   try {
-    const res = await fetch('/api/invoices/export?ids=' + encodeURIComponent(IDS), {
+    const res = await fetch('{{ prefix }}/api/invoices/export?ids=' + encodeURIComponent(IDS), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ form }),
@@ -590,11 +590,11 @@ async function doExport() {
     document.getElementById('save-info').innerHTML =
       '已生成并保存：' + data.folder + '/' + data.filename + '（第 ' + data.version + ' 次生成）' +
       ' <a href="' + data.download + '" class="ms-1">下载此文件</a>' +
-      ' <a href="/files" class="ms-1">查看报关发票</a>' +
+      ' <a href="{{ prefix }}/files" class="ms-1">查看报关发票</a>' +
       (data.list_download
         ? '<br>装柜列表已更新：' + data.list_filename +
           ' <a href="' + data.list_download + '" class="ms-1">下载列表</a>' +
-          ' <a href="' + (data.list_url || '/shipments') + '" class="ms-1">查看装柜列表</a>'
+          ' <a href="' + (data.list_url || '{{ prefix }}/shipments') + '" class="ms-1">查看装柜列表</a>'
         : '') +
       (data.track_changes
         ? '<br><span class="text-muted">已开启本地修订记录：Excel「审阅 → 修订」可查看后续修改。</span>'

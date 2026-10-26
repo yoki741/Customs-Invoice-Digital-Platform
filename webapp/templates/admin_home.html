@@ -3,11 +3,11 @@
 {% block heading %}管理后台{% endblock %}
 {% block crumb %}总览{% endblock %}
 {% block topbar_actions %}
-<a class="btn btn-sm btn-primary" href="/admin/upload">上传 .xlsm 导入</a>
-<a class="btn btn-sm btn-outline-primary" href="/admin/users">账号管理</a>
-<a class="btn btn-sm btn-outline-primary" href="/admin/exports">导出历史</a>
-<a class="btn btn-sm btn-outline-secondary" href="/invoices">发票列表</a>
-<a class="btn btn-sm btn-outline-secondary" href="/details">发票明细</a>
+<a class="btn btn-sm btn-primary" href="{{ prefix }}/admin/upload">上传 .xlsm 导入</a>
+<a class="btn btn-sm btn-outline-primary" href="{{ prefix }}/admin/users">账号管理</a>
+<a class="btn btn-sm btn-outline-primary" href="{{ prefix }}/admin/exports">导出历史</a>
+<a class="btn btn-sm btn-outline-secondary" href="{{ prefix }}/invoices">发票列表</a>
+<a class="btn btn-sm btn-outline-secondary" href="{{ prefix }}/details">发票明细</a>
 {% endblock %}
 {% block content %}
 

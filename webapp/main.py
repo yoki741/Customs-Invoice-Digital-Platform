@@ -3,7 +3,11 @@
 
 启动::
 
+    # 本地开发（本地账号密码登录）
     python -m uvicorn webapp.main:app --host 127.0.0.1 --port 8000
+
+    # 生产（DTD_nginx Portal 子路径挂载，身份由 Nginx 注入 Remote-* header）
+    CUSTOMS_AUTH_MODE=sso uvicorn webapp.main:app --host 0.0.0.0 --port 8000
 """
 
 from __future__ import annotations
@@ -11,21 +15,31 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from core.config import BASE_DIR, ensure_dirs
-from .auth import LoginRequired, PermissionDenied, get_secret_key, hash_password, setup_logging
+from core.config import BASE_DIR, PORTAL_INTERNAL_URL, SEED_ADMIN, SSO_MODE, ensure_dirs
+from .auth import (
+    LoginRequired,
+    PermissionDenied,
+    get_secret_key,
+    hash_password,
+    login_redirect_url,
+    setup_logging,
+    wants_html,
+)
+from .middleware import TrustedProxyMiddleware
 from .models import (
     ROLE_ADMIN,
     User,
     SessionLocal,
     init_db,
 )
+from .prefix import PrefixMiddleware
 from .routers import admin_router, auth_router, detail_router, invoice_router
 from .templates_setup import templates
 
@@ -48,15 +62,20 @@ class _StaticCacheMiddleware(BaseHTTPMiddleware):
         return response
 
 app = FastAPI(title="報關發票(柬埔寨)數字化管理平台", docs_url=None, redoc_url=None)
+# 中间件注册顺序说明：Starlette 后加入的在外层，因此 TrustedProxyMiddleware
+# 最后注册，最先执行（伪造 Remote-* 的内网外请求在进入业务逻辑前就被拒绝）。
 app.add_middleware(
     SessionMiddleware,
     secret_key=get_secret_key(),
     same_site="lax",
-    https_only=False,
+    # 生产经 Nginx 走 HTTPS；本地直连 http://127.0.0.1:8000 必须允许明文
+    https_only=SSO_MODE,
     max_age=60 * 60 * 12,
 )
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(_StaticCacheMiddleware)
+app.add_middleware(PrefixMiddleware)
+app.add_middleware(TrustedProxyMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(auth_router.router)
@@ -65,13 +84,38 @@ app.include_router(detail_router.router)
 app.include_router(admin_router.router)
 
 
+# ---- 健康检查（供容器 healthcheck / Portal 监控使用，不鉴权） ----
+
+
+@app.get("/healthz")
+async def healthz() -> JSONResponse:
+    """返回服务健康状态，不触发认证。
+
+    Returns:
+        JSONResponse: 固定 200 与运行模式，便于运维核对。
+    """
+    return JSONResponse(
+        {"status": "ok", "auth_mode": "sso" if SSO_MODE else "local"}
+    )
+
+
 # ---- 异常处理 ----
 
 
 @app.exception_handler(LoginRequired)
 async def _login_required(request: Request, exc: LoginRequired) -> Response:
+    """未认证处理。
+
+    SSO 模式下 API 请求返回 401（前端可据此提示），页面请求跳 oauth2-proxy
+    登录入口；本地模式统一跳本应用登录页。
+    """
     next_url = exc.next_url or str(request.url.path)
-    return RedirectResponse(f"/login?next={next_url}", status_code=303)
+    if SSO_MODE and not wants_html(request):
+        return JSONResponse(
+            {"code": 401, "message": "登录状态已失效，请重新登录"}, status_code=401
+        )
+    return RedirectResponse(login_redirect_url(next_url), status_code=303)
+
 
 
 @app.exception_handler(PermissionDenied)
@@ -143,8 +187,12 @@ async def page_not_found(request: Request, path: str) -> Response:
 
 
 def seed_admin() -> None:
-    """首次启动创建默认管理员。"""
+    """首次启动创建默认管理员（仅本地开发，生产由统一登录 JIT 开通）。"""
+    if not SEED_ADMIN:
+        logger.info("已跳过默认管理员初始化（CUSTOMS_SEED_ADMIN=0）")
+        return
     db = SessionLocal()
+
     try:
         if db.query(User).filter(User.role == ROLE_ADMIN).count() == 0:
             if db.query(User).count() == 0:
@@ -168,15 +216,19 @@ seed_admin()
 @app.on_event("startup")
 async def _startup() -> None:
     logger.info("平台启动：{}", BASE_DIR)
+    if SSO_MODE:
+        logger.info(
+            "认证模式：sso（Nginx 注入 Remote-* header；登出经 Portal {}）",
+            PORTAL_INTERNAL_URL,
+        )
+    else:
+        logger.info("认证模式：local（本地账号密码登录，直连 8000 使用）")
     try:
-        from .auth import get_header_auth_secret
         from .models import backup_db
 
-        # 打印密钥指纹（前6位），便于运维核对 nginx 配置，不泄露全量
-        secret = get_header_auth_secret()
-        logger.info("Header 认证已启用，共享密钥指纹: {}…（nginx X-Internal-Token 需一致）", secret[:6])
         dest = backup_db()
         if dest:
             logger.info("已备份数据库：{}", dest)
     except Exception as exc:  # noqa: BLE001
         logger.warning("启动附加任务失败：{}", exc)
+

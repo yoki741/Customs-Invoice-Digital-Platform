@@ -1,11 +1,11 @@
-<!doctype html>
+{% set plen = prefix|length if prefix else 0 %}{% set path = request.url.path[plen:] if plen and request.url.path.startswith(prefix) else request.url.path %}<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}報關發票(柬埔寨)數字化管理平台{% endblock %}</title>
-  <link rel="stylesheet" href="/static/vendor/bootstrap.min.css">
-  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="stylesheet" href="{{ prefix }}/static/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="{{ prefix }}/static/css/app.css">
   {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -21,33 +21,33 @@
 
   <nav class="sidebar-nav">
     {% if user and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
-    <a class="side-link {% if request.url.path.startswith('/invoices') %}active{% endif %}" href="/invoices">
+    <a class="side-link {% if path.startswith('/invoices') %}active{% endif %}" href="{{ prefix }}/invoices">
       <span class="ico">▤</span> 发票列表</a>
-    <a class="side-link {% if request.url.path.startswith('/shipments') %}active{% endif %}" href="/shipments">
+    <a class="side-link {% if path.startswith('/shipments') %}active{% endif %}" href="{{ prefix }}/shipments">
       <span class="ico">☰</span> 装柜列表</a>
-    <a class="side-link {% if request.url.path.startswith('/admin/upload') %}active{% endif %}" href="/admin/upload">
+    <a class="side-link {% if path.startswith('/admin/upload') %}active{% endif %}" href="{{ prefix }}/admin/upload">
       <span class="ico">↥</span> 数据导入</a>
     {% endif %}
     {% if user and user.role in [ROLE_TYPE2, ROLE_ADMIN] %}
-    <a class="side-link {% if request.url.path.startswith('/details') %}active{% endif %}" href="/details">
+    <a class="side-link {% if path.startswith('/details') %}active{% endif %}" href="{{ prefix }}/details">
       <span class="ico">☰</span> 发票明细</a>
     {% endif %}
     {% if user %}
-    <a class="side-link {% if request.url.path.startswith('/files') %}active{% endif %}" href="/files">
+    <a class="side-link {% if path.startswith('/files') %}active{% endif %}" href="{{ prefix }}/files">
       <span class="ico">▣</span> 报关发票</a>
     {% endif %}
 
     {% if user and user.role == ROLE_ADMIN %}
     <div class="nav-section">管理</div>
-    <a class="side-link {% if request.url.path == '/admin' %}active{% endif %}" href="/admin">
+    <a class="side-link {% if path == '/admin' %}active{% endif %}" href="{{ prefix }}/admin">
       <span class="ico">◧</span> 管理后台</a>
-    <a class="side-link {% if request.url.path.startswith('/admin/stats') %}active{% endif %}" href="/admin/stats">
+    <a class="side-link {% if path.startswith('/admin/stats') %}active{% endif %}" href="{{ prefix }}/admin/stats">
       <span class="ico">▥</span> 统计报表</a>
-    <a class="side-link {% if request.url.path.startswith('/admin/users') %}active{% endif %}" href="/admin/users">
+    <a class="side-link {% if path.startswith('/admin/users') %}active{% endif %}" href="{{ prefix }}/admin/users">
       <span class="ico">☺</span> 账号管理</a>
-    <a class="side-link {% if request.url.path.startswith('/admin/exports') %}active{% endif %}" href="/admin/exports">
+    <a class="side-link {% if path.startswith('/admin/exports') %}active{% endif %}" href="{{ prefix }}/admin/exports">
       <span class="ico">↓</span> 导出历史</a>
-    <a class="side-link {% if request.url.path.startswith('/admin/audit') %}active{% endif %}" href="/admin/audit">
+    <a class="side-link {% if path.startswith('/admin/audit') %}active{% endif %}" href="{{ prefix }}/admin/audit">
       <span class="ico">☰</span> 操作日志</a>
     {% endif %}
   </nav>
@@ -57,11 +57,12 @@
       <div class="who">{{ user.display_name or user.username }}</div>
       <div>{{ ROLE_LABELS.get(user.role, user.role) }}</div>
       <div class="d-flex gap-2 mt-1">
-        <a class="small" href="/change-password">改密码</a>
-        <a class="small" href="/logout">退出登录 →</a>
+        <a class="small" href="{{ prefix }}/change-password"
+           {% if sso_mode %}title="密码由企业统一登录（Keycloak）管理"{% endif %}>改密码</a>
+        <a class="small" href="{{ prefix }}/logout">退出登录 →</a>
       </div>
     {% else %}
-      <a href="/login">登录</a>
+      <a href="{{ prefix }}/login">登录</a>
     {% endif %}
   </div>
 </aside>
@@ -79,7 +80,8 @@
   </main>
 </div>
 
-<script src="/static/vendor/bootstrap.bundle.min.js" defer></script>
+<script>window.APP_PREFIX = "{{ prefix }}";</script>
+<script src="{{ prefix }}/static/vendor/bootstrap.bundle.min.js" defer></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el =>

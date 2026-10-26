@@ -46,10 +46,10 @@
     <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
     <div>
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/admin/exports?page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ prefix }}/admin/exports?page={{ page - 1 }}">上一页</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/admin/exports?page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ prefix }}/admin/exports?page={{ page + 1 }}">下一页</a>
       {% endif %}
     </div>
   </div>

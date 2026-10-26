@@ -14,7 +14,7 @@
 <div class="card">
   <div class="card-header">上传源数据 .xlsm（InputTable）</div>
   <div class="card-body">
-    <form method="post" action="/admin/upload" enctype="multipart/form-data" id="upload-form">
+    <form method="post" action="{{ prefix }}/admin/upload" enctype="multipart/form-data" id="upload-form">
       <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <div class="mb-3">
         <div id="drop-zone" class="border border-2 rounded-3 text-center py-4 px-3"
@@ -40,7 +40,7 @@
 <div class="card mt-3 border-warning">
   <div class="card-header bg-warning-subtle">发现重复 Invoice No.，请确认是否覆盖</div>
   <div class="card-body">
-    <form method="post" action="/admin/upload" id="confirm-form">
+    <form method="post" action="{{ prefix }}/admin/upload" id="confirm-form">
       <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <input type="hidden" name="confirm" value="1">
       <input type="hidden" name="pending_json" id="pending-json" value="[]">
@@ -67,7 +67,7 @@
       </div>
       <div class="small text-muted mb-3">勾选 = 覆盖已有发票；不勾选 = 跳过该文件。无重复的文件已直接导入。</div>
       <button class="btn btn-warning" type="submit">确认导入</button>
-      <a class="btn btn-outline-secondary" href="/admin/upload">取消</a>
+      <a class="btn btn-outline-secondary" href="{{ prefix }}/admin/upload">取消</a>
     </form>
   </div>
 </div>

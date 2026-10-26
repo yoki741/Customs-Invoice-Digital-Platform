@@ -6,7 +6,7 @@
     <div class="alert alert-{{ level or 'info' }}">
       <h5 class="alert-heading">{{ title }}</h5>
       <p class="mb-2">{{ message }}</p>
-      <a class="btn btn-sm btn-outline-{{ level or 'info' }}" href="{{ back or '/' }}">返回</a>
+      <a class="btn btn-sm btn-outline-{{ level or 'info' }}" href="{{ prefix }}{{ back or '/' }}">返回</a>
     </div>
   </div>
 </div>

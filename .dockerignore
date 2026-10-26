@@ -1,0 +1,45 @@
+# 版本库与本地缓存
+.git
+.gitignore
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.idea
+.vscode
+
+# 运行数据与输出（容器内重新生成，卷持久化）
+data
+logs
+输出
+输出测试
+自定义输出
+screenshots
+
+# 前端依赖与构建产物（镜像内由 frontend 阶段生成）
+webapp/static_src/node_modules
+webapp/static/vendor/univer.js
+webapp/static/vendor/univer.css
+webapp/static/vendor/assets
+webapp/static_src/e2e_*.mjs
+
+# 打包与样本文件
+build
+dist
+*.exe
+*.zip
+*.spec
+柬埔寨清关例子
+tests
+smoke_test_web.py
+test_import_batch.py
+compare_exe_web.py
+
+# 文档与脚本（不进入运行时镜像）
+install_autostart.bat
+run_web.bat
+build_frontend.bat
+service_watchdog.ps1
+使用说明.txt
+*.md

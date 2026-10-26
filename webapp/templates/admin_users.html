@@ -13,11 +13,18 @@
 {% if error %}
 <div class="alert alert-warning py-2">{{ error }}</div>
 {% endif %}
+{% if role_locked %}
+<div class="alert alert-info py-2 small">
+  <strong>统一登录模式：</strong>账号角色由 Keycloak 组决定，本页不再手工改角色
+  {% if role_group_hint %}<br>{{ role_group_hint }}{% endif %}
+  <br>给用户加/减组后刷新页面即生效；本页仍可停用账号（停用优先于组映射）。
+</div>
+{% endif %}
 
 <div class="card">
   <div class="card-header">新建账号</div>
   <div class="card-body">
-    <form class="row g-2 align-items-end" method="post" action="/admin/users">
+    <form class="row g-2 align-items-end" method="post" action="{{ prefix }}/admin/users">
       <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <div class="col-12 col-md-2">
         <label class="form-label">账号</label>
@@ -37,11 +44,18 @@
       </div>
       <div class="col-12 col-md-2">
         <label class="form-label">角色</label>
+        {% if role_locked %}
+        <input type="hidden" name="role" value="{{ default_role }}">
+        <div class="form-control form-control-sm bg-light text-muted">
+          {{ role_labels.get(default_role, default_role) }}（统一登录组决定）
+        </div>
+        {% else %}
         <select class="form-select form-select-sm" name="role">
           {% for r, label in role_labels.items() %}
           <option value="{{ r }}" {% if r == 'type2' %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
+        {% endif %}
       </div>
       <div class="col-auto">
         <button class="btn btn-primary btn-sm">创建</button>
@@ -71,7 +85,12 @@
             <td>{{ r.display_name }}</td>
             <td>{{ r.dept or '-' }}</td>
             <td>
-              <form method="post" action="/admin/users/{{ r.id }}/role" class="d-flex gap-1">
+              {% if role_locked %}
+              <span class="badge {% if r.role == 'admin' %}badge-ok{% else %}bg-light text-dark{% endif %}">
+                {{ role_labels.get(r.role, r.role) }}
+              </span>
+              {% else %}
+              <form method="post" action="{{ prefix }}/admin/users/{{ r.id }}/role" class="d-flex gap-1">
                 <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <select class="form-select form-select-sm" name="role" style="width:auto">
                   {% for rl, label in role_labels.items() %}
@@ -80,6 +99,7 @@
                 </select>
                 <button class="btn btn-sm btn-outline-secondary py-0">改</button>
               </form>
+              {% endif %}
             </td>
             <td>
               {% if r.is_active %}<span class="badge badge-ok">启用</span>
@@ -87,13 +107,13 @@
             </td>
             <td class="small text-muted">{{ r.created_at.strftime('%Y-%m-%d') }}</td>
             <td class="text-end">
-              <form method="post" action="/admin/users/{{ r.id }}/password" class="d-inline-flex gap-1">
+              <form method="post" action="{{ prefix }}/admin/users/{{ r.id }}/password" class="d-inline-flex gap-1">
                 <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <input class="form-control form-control-sm" style="width:110px" name="password" placeholder="新密码" minlength="4" required>
                 <button class="btn btn-sm btn-outline-primary py-0">重置密码</button>
               </form>
               {% if r.id != user.id %}
-              <form method="post" action="/admin/users/{{ r.id }}/toggle" class="d-inline">
+              <form method="post" action="{{ prefix }}/admin/users/{{ r.id }}/toggle" class="d-inline">
                 <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <button class="btn btn-sm {% if r.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %} py-0">
                   {% if r.is_active %}停用{% else %}启用{% endif %}
