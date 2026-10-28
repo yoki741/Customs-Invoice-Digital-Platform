@@ -13,7 +13,12 @@ from typing import Any, Iterable, Optional
 from loguru import logger
 from sqlalchemy.orm import Session
 
-from core.config import ENABLE_TRACK_CHANGES, HISTORY_DIR, OUTPUT_DIR, ensure_dirs
+from core.config import (
+    ENABLE_TRACK_CHANGES,
+    HISTORY_DIR,
+    OUTPUT_DIR,
+    ensure_dirs,
+)
 from core.exporter import (
     BuildResult,
     Exporter,
@@ -590,17 +595,22 @@ def record_shipment_list(
 ) -> dict[str, Any]:
     """导出成功后写入装柜列表并刷新当月 Excel。
 
-    以「清关文件发票号」（custom_no）为业务主键，重复导出同一票时更新原行。
-    装柜列表数据由清关文件（INV1/PKL1）提取，调用前已构建为 row。
+    以「源文件发票号集合（排序）+ 工厂」（source_key）为业务主键，重复导出同一批
+    源数据时更新原行，与手填 Invoice No.（custom_no）无关。装柜列表数据由清关文件
+    （INV1/PKL1）提取，调用前已构建为 row。
     """
     month = month_of(row.date)
     payload = row.as_dict()
 
+    # 稳定的去重键：源文件发票号集合（排序）+ 工厂
+    invoice_nos = sorted({i.invoice_no for i in invoices if i.invoice_no})
+    source_key = f"{row.est_vco or ''}:{','.join(invoice_nos)}" if invoice_nos else ""
+
     entry = None
-    if row.custom_no:
+    if source_key:
         entry = (
             db.query(ShipmentListEntry)
-            .filter(ShipmentListEntry.custom_no == row.custom_no)
+            .filter(ShipmentListEntry.source_key == source_key)
             .one_or_none()
         )
     if entry is None:
@@ -609,6 +619,7 @@ def record_shipment_list(
     previous_month = entry.month or ""
     for key, value in payload.items():
         setattr(entry, key, value)
+    entry.source_key = source_key
     entry.month = month
     entry.job_id = job_id
     entry.invoice_ids = json.dumps([i.id for i in invoices])

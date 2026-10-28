@@ -202,6 +202,8 @@ class ShipmentListEntry(Base):
     shipper: Mapped[str] = mapped_column(String(128), default="")
     est_vco: Mapped[str] = mapped_column(String(32), default="")
     custom_no: Mapped[str] = mapped_column(String(128), index=True, default="")
+    # 稳定去重键：源文件发票号集合（排序）+ 工厂，与手填 Invoice No. 无关
+    source_key: Mapped[str] = mapped_column(String(512), index=True, default="")
     package: Mapped[Optional[float]] = mapped_column(Float)
     blading: Mapped[str] = mapped_column(String(128), default="")
     container_1: Mapped[str] = mapped_column(String(64), default="")
@@ -324,7 +326,7 @@ def _migrate_check_fields() -> None:
 
 
 def _migrate_shipment_fields() -> None:
-    """为已有 shipment_list_entries 表补上柜型 / CBM 列（SQLite ALTER ADD COLUMN）。"""
+    """为已有 shipment_list_entries 表补上柜型 / CBM / source_key 列（SQLite ALTER）。"""
     with engine.begin() as conn:
         existing = {
             row[1]
@@ -335,11 +337,24 @@ def _migrate_shipment_fields() -> None:
         for name, decl in (
             ("container_type", "VARCHAR(64) DEFAULT ''"),
             ("cbm", "FLOAT"),
+            ("source_key", "VARCHAR(512) DEFAULT ''"),
         ):
             if name not in existing:
                 conn.exec_driver_sql(
                     f"ALTER TABLE shipment_list_entries ADD COLUMN {name} {decl}"
                 )
+        # 回填历史行的 source_key：从 fty_inv（源发票号空格连接）拆出并排序 + 工厂
+        rows = conn.exec_driver_sql(
+            "SELECT id, est_vco, fty_inv FROM shipment_list_entries "
+            "WHERE source_key = '' OR source_key IS NULL"
+        ).fetchall()
+        for rid, est_vco, fty_inv in rows:
+            nos = sorted((fty_inv or "").split())
+            key = f"{est_vco or ''}:{','.join(nos)}" if nos else ""
+            conn.exec_driver_sql(
+                "UPDATE shipment_list_entries SET source_key = ? WHERE id = ?",
+                (key, rid),
+            )
 
 
 def get_db():
