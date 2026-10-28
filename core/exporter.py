@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+import time
 import zipfile
 from collections import defaultdict
 from copy import copy
@@ -247,10 +248,10 @@ def inject_vba(xlsx_path: Path, carrier: Path, out_xlsm: Path) -> bool:
 
 
 def enable_track_changes(file_path: Path) -> bool:
-    """用本机 Excel 开启共享工作簿的“修订跟踪”。
+    """用本机 Excel 开启共享工作簿的"修订跟踪"。
 
-    开启后，用户在本地 Excel 的修改会记录修改人、时间、单元格与旧值/新值，
-    可在「审阅 → 修订」中查看。Excel 未安装、文件被占用或自动化失败时返回 False。
+    开启后，用户在本地 Excel 的修改会记录修改人、时间、单元格与旧值/新值。
+    Excel 未安装、文件被占用或自动化失败时返回 False。
     """
     path = Path(file_path)
     temp_path = path.with_name(path.stem + "_tracktmp.xlsm")
@@ -259,51 +260,56 @@ def enable_track_changes(file_path: Path) -> bool:
     except Exception:
         return False
 
-    app = None
-    workbook = None
-    try:
-        if temp_path.exists():
-            temp_path.unlink()
-        app = win32.DispatchEx("Excel.Application")
-        app.Visible = False
-        app.DisplayAlerts = False
-        app.EnableEvents = False
-        try:
-            app.AutomationSecurity = 3
-        except Exception:
-            pass
-
-        workbook = app.Workbooks.Open(str(path))
-        workbook.TrackRevisions = True
-        try:
-            workbook.HighlightChangesOnScreen = True
-        except Exception:
-            pass
-        workbook.SaveAs(str(temp_path), FileFormat=52, AccessMode=2)
-        workbook.Close(SaveChanges=False)
-        workbook = None
-        app.Quit()
+    for attempt in range(2):
         app = None
-        temp_path.replace(path)
-        return True
-    except Exception:
-        return False
-    finally:
-        if workbook is not None:
-            try:
-                workbook.Close(SaveChanges=False)
-            except Exception:
-                pass
-        if app is not None:
-            try:
-                app.Quit()
-            except Exception:
-                pass
+        workbook = None
         try:
             if temp_path.exists():
                 temp_path.unlink()
+            app = win32.DispatchEx("Excel.Application")
+            app.Visible = False
+            app.DisplayAlerts = False
+            app.EnableEvents = False
+            try:
+                app.AutomationSecurity = 3
+            except Exception:
+                pass
+
+            workbook = app.Workbooks.Open(str(path))
+            workbook.TrackRevisions = True
+            try:
+                workbook.HighlightChangesOnScreen = True
+            except Exception:
+                pass
+            workbook.SaveAs(str(temp_path), FileFormat=52, AccessMode=2)
+            workbook.Close(SaveChanges=False)
+            workbook = None
+            app.Quit()
+            app = None
+            temp_path.replace(path)
+            return True
         except Exception:
-            pass
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            return False
+        finally:
+            if workbook is not None:
+                try:
+                    workbook.Close(SaveChanges=False)
+                except Exception:
+                    pass
+            if app is not None:
+                try:
+                    app.Quit()
+                except Exception:
+                    pass
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
+    return False
 
 
 class Exporter:

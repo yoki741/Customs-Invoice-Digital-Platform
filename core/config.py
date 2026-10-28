@@ -38,8 +38,17 @@ SHIPMENT_LIST_TEMPLATE = TEMPLATE_DIR / "装柜列表模板.xlsx"
 SHIPMENT_LIST_DIR = OUTPUT_DIR / "装柜列表"
 
 # 导出后是否用 Excel 开启“修订跟踪”（本地修改可回溯）。
-# Excel 不可用时自动跳过；设 INVOICE_TRACK_CHANGES=0 可关闭。
-ENABLE_TRACK_CHANGES = os.environ.get("INVOICE_TRACK_CHANGES", "1") != "0"
+# 该功能会在 Excel 标题栏显示「[共享]」，容易被同事察觉；默认关闭，仅在有需要时
+# 设 INVOICE_TRACK_CHANGES=1 手动开启。
+ENABLE_TRACK_CHANGES = os.environ.get("INVOICE_TRACK_CHANGES", "0") != "0"
+
+# 文件内嵌“修改记录器”：极隐藏 _LOG 表 + 工作簿结构保护密码。
+# 密码用于防止同事在 Excel 界面取消隐藏 _LOG 表（Excel 保护密码强度有限，防君子）。
+RECORDER_PASSWORD = os.environ.get("INVOICE_RECORDER_PASSWORD", "Invoice@2026")
+# 是否在导出时注入修改记录器 VBA。该方案已停用：依赖本机 Excel + 破解源文件
+# VBA 工程锁，成本高且不稳定；取证改走「指纹 + 内容比对」。默认关闭，除非
+# 显式设 INVOICE_RECORDER=1。
+ENABLE_RECORDER = os.environ.get("INVOICE_RECORDER", "0") != "0"
 
 
 def ensure_dirs() -> None:
