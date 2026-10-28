@@ -3,19 +3,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, noload
 
-from ..auth import audit, require_any, require_type1
+from ..auth import audit, require_admin, require_any, require_type1
 from ..converters.field_map import EDITABLE_FIELDS, EXTRA_FIELDS, validate_form
 from ..models import (
     CHECK_FAILED,
@@ -398,6 +400,7 @@ async def download(
     folder: str = "",
     name: str = "",
     user: User = Depends(require_any),
+    db: Session = Depends(get_db),
 ) -> object:
     from core.config import OUTPUT_DIR
 
@@ -409,6 +412,8 @@ async def download(
         return JSONResponse({"ok": False, "error": "非法路径"}, status_code=400)
     if not target.is_file():
         return JSONResponse({"ok": False, "error": "文件不存在"}, status_code=404)
+    # 静默记录下载行为：谁在何时下载了哪份文件（用于甩锅时回溯取证，同事不可见）
+    audit(db, user, "download", f"{folder}/{name}")
     return FileResponse(
         target,
         media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
@@ -711,4 +716,207 @@ async def file_backup(
         target,
         media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
         filename=target.name,
+    )
+
+
+def _original_file_for(db: Session, record: ExportFileVersion) -> Optional[Path]:
+    """返回该版本导出内容的真实文件路径。
+
+    平台同名文件唯一：重新生成会覆盖正式文件，旧版本的实际内容存在
+    「下一版记录」的 backup_path（生成下一版时自动归档的留底）里。
+    只有最新版的 file_path 才是该版本自己的内容。
+    """
+    nxt = (
+        db.query(ExportFileVersion)
+        .filter(
+            ExportFileVersion.kind == "export",
+            ExportFileVersion.folder == record.folder,
+            ExportFileVersion.filename == record.filename,
+            ExportFileVersion.version == record.version + 1,
+        )
+        .first()
+    )
+    if nxt and nxt.backup_path:
+        path = Path(nxt.backup_path)
+        if path.is_file():
+            return path
+        # 有下一版但留底丢失：旧内容已不可考，不能拿最新版冒充
+        return None
+    if record.file_path:
+        path = Path(record.file_path)
+        if path.is_file():
+            return path
+    return None
+
+
+def _closest_version(
+    db: Session, filename: str, data: bytes
+) -> Optional[tuple[Path, dict]]:
+    """按文件名找全部历史版本文件，返回改动最少的一份 (路径, 来源信息)。"""
+    from core.compare import diff_xlsm
+
+    records = (
+        db.query(ExportFileVersion)
+        .filter(
+            ExportFileVersion.kind == "export",
+            ExportFileVersion.filename == filename,
+        )
+        .order_by(ExportFileVersion.id.desc())
+        .all()
+    )
+    best_path: Optional[Path] = None
+    best_source: dict = {}
+    best_count: Optional[int] = None
+    seen: set[str] = set()
+    for rec in records:
+        path = _original_file_for(db, rec)
+        if path is None or str(path) in seen:
+            continue
+        seen.add(str(path))
+        try:
+            result = diff_xlsm(path, data)
+        except Exception:  # noqa: BLE001
+            continue
+        if best_count is None or result["count"] < best_count:
+            best_count = result["count"]
+            best_path = path
+            best_source = {
+                "folder": rec.folder,
+                "filename": rec.filename,
+                "version": rec.version,
+                "exported_by": rec.created_by or "-",
+            }
+    if best_path is None:
+        return None
+    return best_path, best_source
+
+
+def _diff_against_original(
+    db: Session, data: bytes, filename_hint: str
+) -> Optional[dict]:
+    """定位回传文件对应的原始导出并逐格比对；无法定位返回 None。"""
+    from core.compare import diff_xlsm, read_doc_props
+    from core.exporter import read_trace_sheet
+
+    # 1) 从内嵌追踪表读 JOB_ID / FILE_STEM，定位原始导出记录
+    trace: dict[str, str] = {}
+    with tempfile.NamedTemporaryFile(suffix=".xlsm", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        tmp.write(data)
+    try:
+        trace = read_trace_sheet(tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    record: Optional[ExportFileVersion] = None
+    job_id = trace.get("JOB_ID", "").strip()
+    if job_id.isdigit():
+        record = (
+            db.query(ExportFileVersion)
+            .filter(
+                ExportFileVersion.kind == "export",
+                ExportFileVersion.job_id == int(job_id),
+            )
+            .order_by(ExportFileVersion.id.desc())
+            .first()
+        )
+
+    original: Optional[Path] = None
+    source: dict = {}
+    if record is not None:
+        original = _original_file_for(db, record)
+        source = {
+            "folder": record.folder,
+            "filename": record.filename,
+            "version": record.version,
+            "exported_by": record.created_by or "-",
+        }
+
+    # 2) 追踪表缺失/失效：按文件名兜底，比对全部历史版本取改动最少者
+    if original is None:
+        filename = filename_hint
+        stem = trace.get("FILE_STEM", "").strip()
+        if stem:
+            filename = stem + ".xlsm"
+        if not filename:
+            return None
+        best = _closest_version(db, filename, data)
+        if best is None:
+            return None
+        original, source = best
+
+    try:
+        result = diff_xlsm(original, data)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "source": source,
+            "trace_missing": not bool(trace),
+            "diff_error": f"内容比对失败：{exc}",
+            "original_props": read_doc_props(original.read_bytes()),
+        }
+
+    return {
+        "source": source,
+        "trace_missing": not bool(trace),
+        "diff": result["changes"][:300],
+        "diff_count": result["count"],
+        "original_props": read_doc_props(original.read_bytes()),
+    }
+
+
+@router.post("/api/files/verify")
+async def file_verify(
+    file: UploadFile = File(...),
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> object:
+    """把文件传回来校验：与平台导出记录的 SHA256 比对，判断是否被本地改动。
+
+    仅管理员可用：改动详情、修改人等取证信息不对普通账号开放。
+    """
+    data = await file.read()
+    if not data:
+        return JSONResponse({"ok": False, "error": "空文件"}, status_code=400)
+    sha = hashlib.sha256(data).hexdigest()
+
+    matches = (
+        db.query(ExportFileVersion)
+        .filter(
+            ExportFileVersion.kind == "export",
+            ExportFileVersion.sha256 == sha,
+        )
+        .order_by(ExportFileVersion.id.desc())
+        .all()
+    )
+    if not matches:
+        from core.compare import read_doc_props
+
+        payload: dict = {
+            "ok": True,
+            "matched": False,
+            "sha": sha,
+            "message": "与平台任何导出记录都不匹配：该文件在导出后被修改（或被重新保存）过。",
+            # Excel 保存时自动记录的保存人/保存时间——谁改的、何时改的旁证
+            "uploaded_props": read_doc_props(data),
+        }
+        diff_info = _diff_against_original(db, data, file.filename or "")
+        if diff_info is not None:
+            payload.update(diff_info)
+        return JSONResponse(payload)
+    m = matches[0]
+    return JSONResponse(
+        {
+            "ok": True,
+            "matched": True,
+            "sha": sha,
+            "folder": m.folder,
+            "filename": m.filename,
+            "version": m.version,
+            "exported_by": m.created_by or "-",
+            "exported_at": m.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "message": (
+                f"与平台记录一致：{m.folder}/{m.filename}，第 {m.version} 次生成，"
+                f"导出人 {m.created_by or '-'}，时间 {m.created_at.strftime('%Y-%m-%d %H:%M:%S')}。"
+            ),
+        }
     )

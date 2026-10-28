@@ -25,6 +25,10 @@
       <input class="form-control form-control-sm" name="q" value="{{ q }}"
              placeholder="按文件名 / 提单号 / 操作人搜索" style="max-width:360px">
       <button class="btn btn-primary btn-sm">搜索</button>
+      {% if user and user.role == ROLE_ADMIN %}
+      <button type="button" class="btn btn-outline-secondary btn-sm ms-auto"
+              onclick="openVerify()">校验文件是否被改动</button>
+      {% endif %}
     </form>
   </div>
 </div>
@@ -56,7 +60,7 @@
                       onclick="previewFile('{{ g.folder }}', '{{ g.filename }}')">预览</button>
               <button class="btn btn-sm btn-outline-info py-0"
                       onclick="showHistory('{{ g.folder }}', '{{ g.filename }}')">修改记录</button>
-              {% set dl = '/api/download?folder=' ~ g.folder ~ '&name=' ~ g.filename %}
+              {% set dl = '/api/download?folder=' ~ (g.folder | urlencode) ~ '&name=' ~ (g.filename | urlencode) %}
               <a class="btn btn-sm btn-outline-secondary py-0" href="{{ dl }}">下载</a>
             </td>
           </tr>
@@ -105,6 +109,29 @@
         <button type="button" class="btn-close ms-auto" onclick="closeHistory()"></button>
       </div>
       <div class="modal-body" style="max-height:70vh;overflow-y:auto" id="history-body">
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="verify-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <span class="fw-semibold small">校验文件是否被本地改动</span>
+        <button type="button" class="btn-close ms-auto" onclick="closeVerify()"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">
+          上传一份已下载的报关发票 .xlsm，平台会计算它的 SHA256 指纹并与导出记录比对：
+          完全一致说明没被动过；不一致说明该文件在导出后被修改或重新保存过。
+        </p>
+        <input type="file" id="verify-file" class="form-control form-control-sm"
+               accept=".xlsm">
+        <div id="verify-result" class="mt-3"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-primary btn-sm" onclick="doVerify()">开始校验</button>
       </div>
     </div>
   </div>
@@ -256,6 +283,133 @@ async function showHistory(folder, name) {
 
 function closeHistory() {
   if (historyModal) historyModal.hide();
+}
+
+let verifyModal = null;
+function openVerify() {
+  if (!verifyModal) {
+    verifyModal = new bootstrap.Modal(document.getElementById('verify-modal'));
+  }
+  document.getElementById('verify-file').value = '';
+  document.getElementById('verify-result').innerHTML = '';
+  verifyModal.show();
+}
+function closeVerify() {
+  if (verifyModal) verifyModal.hide();
+}
+async function doVerify() {
+  const input = document.getElementById('verify-file');
+  const box = document.getElementById('verify-result');
+  if (!input.files.length) {
+    box.innerHTML = '<div class="text-danger small">请先选择一个 .xlsm 文件</div>';
+    return;
+  }
+  box.innerHTML = '<div class="text-muted small">校验中...</div>';
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  let res;
+  try {
+    res = await fetch('/api/files/verify', { method: 'POST', body: fd });
+  } catch (err) {
+    box.innerHTML = '<div class="text-danger small">请求失败: ' + err + '</div>';
+    return;
+  }
+  const data = await res.json();
+  if (!data.ok) {
+    box.innerHTML = '<div class="text-danger small">' + (data.error || '校验失败') + '</div>';
+    return;
+  }
+  renderVerifyResult(data);
+}
+
+function fmtUtc(s) {
+  // "2026-10-28T03:15:47Z" → 北京时间 "2026-10-28 11:15:47"
+  if (!s) return '';
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return s;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  d.setTime(d.getTime() + 8 * 3600 * 1000); // UTC → 北京时间
+  const p = n => String(n).padStart(2, '0');
+  return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) +
+         ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds());
+}
+
+function renderVerifyResult(data) {
+  const box = document.getElementById('verify-result');
+  if (data.matched) {
+    box.innerHTML =
+      '<div class="alert alert-success py-2 small mb-1">' + esc(data.message) + '</div>' +
+      '<div class="small text-muted">SHA256: ' + esc(data.sha) + '</div>';
+    return;
+  }
+  let html =
+    '<div class="alert alert-danger py-2 small mb-1">' + esc(data.message) + '</div>' +
+    '<div class="small text-muted mb-2">SHA256: ' + esc(data.sha) + '</div>';
+
+  // 修改人 / 修改时间卡片（Excel 保存时自动记录，醒目展示）
+  const up = data.uploaded_props || {};
+  const op = data.original_props || {};
+  if (up.modified || up.last_modified_by) {
+    html += '<div class="border border-danger rounded p-2 mb-2 bg-light">' +
+      '<div class="fw-semibold mb-1">📌 修改人与修改时间</div>' +
+      '<table class="table table-sm table-borderless mb-0 small">' +
+      '<tr><td class="text-muted" style="width:90px">修改人</td>' +
+      '<td><b>' + esc(up.last_modified_by || '未知') + '</b>' +
+      ' <span class="text-muted">（Excel 保存时自动记录的电脑账号）</span></td></tr>' +
+      '<tr><td class="text-muted">修改时间</td>' +
+      '<td><b>' + esc(fmtUtc(up.modified) || '未知') + '</b>' +
+      ' <span class="text-muted">（北京时间，即最后一次保存时间）</span></td></tr>' +
+      (op.modified ?
+        '<tr><td class="text-muted">平台原件</td>' +
+        '<td class="text-muted">由 ' + esc(op.last_modified_by || '-') +
+        ' 保存于 ' + esc(fmtUtc(op.modified)) + '</td></tr>' : '') +
+      '</table></div>';
+  }
+
+  if (data.diff_error) {
+    html += '<div class="small text-muted">' + esc(data.diff_error) + '</div>';
+  } else if (data.diff && data.diff.length) {
+    if (data.source) {
+      html += '<div class="small fw-semibold mb-1">比对到原始文件：' +
+        esc(data.source.folder) + '/' + esc(data.source.filename) +
+        ' · 第 ' + (data.source.version || '-') + ' 次生成 · 导出人 ' +
+        esc(data.source.exported_by || '-') + '</div>';
+    }
+    if (data.trace_missing) {
+      html += '<div class="small text-warning mb-1">⚠ 该文件内嵌追踪表已被删除或篡改（本身就很可疑）。</div>';
+    }
+    html += '<div class="small text-muted mb-1">共 ' + data.diff_count +
+      ' 处改动' + (data.diff_count > data.diff.length ? '（仅显示前 ' + data.diff.length + ' 处）' : '') + '：</div>';
+
+    const bySheet = {};
+    data.diff.forEach(d => {
+      (bySheet[d.sheet] = bySheet[d.sheet] || []).push(d);
+    });
+    html += '<div style="max-height:320px;overflow-y:auto">';
+    Object.keys(bySheet).forEach(sheet => {
+      html += '<div class="fw-semibold small mt-2">表：' + esc(sheet) + '</div>';
+      html += '<table class="table table-sm table-bordered mb-0 small">' +
+        '<thead><tr><th style="width:70px">单元格</th><th>原值</th><th>现值</th></tr></thead><tbody>';
+      bySheet[sheet].forEach(d => {
+        const o = d.original == null
+          ? '<span class="text-muted">（空）</span>' : multiline(d.original);
+        const m = d.modified == null
+          ? '<span class="text-muted">（空）</span>' : multiline(d.modified);
+        html += '<tr><td>' + esc(d.cell) + '</td>' +
+          '<td class="text-muted text-decoration-line-through">' + o + '</td>' +
+          '<td><b>' + m + '</b></td></tr>';
+      });
+      html += '</tbody></table>';
+    });
+    html += '</div>';
+  } else if (data.source) {
+    html += '<div class="small text-muted">比对到原始文件 ' +
+      esc(data.source.folder) + '/' + esc(data.source.filename) +
+      '，可见单元格内容一致——差异可能来自宏或元数据等不可见区域。</div>';
+  } else {
+    html += '<div class="small text-muted">未能定位对应的原始导出文件，无法逐格比对。</div>';
+  }
+  box.innerHTML = html;
 }
 </script>
 {% endblock %}
