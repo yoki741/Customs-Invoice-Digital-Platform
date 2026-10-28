@@ -161,6 +161,22 @@
 <script src="/static/vendor/univer.js"></script>
 <script>
 const IDS = {{ ids | tojson }};
+// 运输方式字符串，用于 ETD→ETA 自动推算（空运 +1 天，海运/汽运 +8 天）
+const SHIP_MODE_BLOB = {{ ((first.transport or '') + ' ' + (first.ship_mode or '')) | tojson }};
+
+function addDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return dt.getFullYear() + '-' +
+    String(dt.getMonth() + 1).padStart(2, '0') + '-' +
+    String(dt.getDate()).padStart(2, '0');
+}
+
+document.getElementById('sm-etd').addEventListener('change', function () {
+  if (!this.value) return;
+  const isAir = /AIR|空运/i.test(SHIP_MODE_BLOB);
+  document.getElementById('sm-eta').value = addDays(this.value, isAir ? 1 : 8);
+});
 // 记住本次编辑的发票，发票列表页可一键继续编辑
 try {
   localStorage.setItem('last_edit_ids', IDS);
