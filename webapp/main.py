@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -68,14 +68,34 @@ app.include_router(admin_router.router)
 # ---- 异常处理 ----
 
 
+def _wants_json(request: Request) -> bool:
+    """判断是否 fetch/XHR 调用接口（浏览器 Sec-Fetch-Dest: empty）。
+
+    这类请求拿到跳转/HTML 会报 "Unexpected token '<'"，统一返回 JSON 错误；
+    页面导航（表单提交、地址栏、<a>）不带该头，维持原有跳转/错误页行为。
+    """
+    return (
+        request.url.path.startswith("/api/")
+        and request.headers.get("sec-fetch-dest", "") == "empty"
+    )
+
+
 @app.exception_handler(LoginRequired)
 async def _login_required(request: Request, exc: LoginRequired) -> Response:
     next_url = exc.next_url or str(request.url.path)
+    if _wants_json(request):
+        return JSONResponse(
+            {"ok": False, "error": "Session expired, please log in again",
+             "login_required": True, "next": next_url},
+            status_code=401,
+        )
     return RedirectResponse(f"/login?next={next_url}", status_code=303)
 
 
 @app.exception_handler(PermissionDenied)
 async def _permission_denied(request: Request, exc: PermissionDenied) -> Response:
+    if _wants_json(request):
+        return JSONResponse({"ok": False, "error": exc.message}, status_code=403)
     user_id = request.session.get("uid")
     return templates.TemplateResponse(
         request,
@@ -96,6 +116,12 @@ async def _permission_denied(request: Request, exc: PermissionDenied) -> Respons
 async def _server_error(request: Request, exc: Exception) -> Response:
     """兜底 500：记录日志，显示友好错误页。"""
     logger.exception("未处理异常: {} {}", request.method, request.url.path)
+    if _wants_json(request):
+        return JSONResponse(
+            {"ok": False,
+             "error": "An error occurred while processing the request, please try again later"},
+            status_code=500,
+        )
     return templates.TemplateResponse(
         request,
         "message.html",
@@ -126,6 +152,10 @@ _RESERVED_PREFIXES = ("api", "static", "admin", "invoices", "details", "login", 
 async def page_not_found(request: Request, path: str) -> Response:
     first_segment = path.split("/", 1)[0]
     if first_segment in _RESERVED_PREFIXES:
+        if first_segment == "api":
+            return JSONResponse(
+                {"ok": False, "error": f"API not found: /{path}"}, status_code=404
+            )
         return Response(status_code=404)
     return templates.TemplateResponse(
         request,

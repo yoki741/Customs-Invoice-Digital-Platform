@@ -18,19 +18,31 @@
   .shipments-table td[data-field] select {
     font-size: .72rem; padding: 0 .25rem; height: 25px; min-width: 64px; width: 100%;
   }
-  /* 报关发票列冻结在最左（Excel 冻结窗格效果）；表头吸顶由全局 .table-responsive 样式负责 */
-  .shipments-table .sticky-col {
+  /* 选择框列 + 报关发票列冻结在最左（Excel 冻结窗格效果）；表头吸顶由全局 .table-responsive 样式负责 */
+  .shipments-table .sticky-check {
     position: sticky;
     left: 0;
+    z-index: 1;
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    background: #fff;
+    box-shadow: inset -1px 0 0 var(--border);
+  }
+  .shipments-table .sticky-col {
+    position: sticky;
+    left: 40px;
     z-index: 1;
     background: #fff;
     box-shadow: inset -1px 0 0 var(--border);
   }
+  .shipments-table thead .sticky-check,
   .shipments-table thead .sticky-col {
     z-index: 3;
     background: #fafbfc;
     box-shadow: inset -1px 0 0 var(--border), inset 0 -1px 0 var(--border);
   }
+  .shipments-table tbody tr:hover > .sticky-check,
   .shipments-table tbody tr:hover > .sticky-col { background: #f8f9fc; }
 </style>
 {% endblock %}
@@ -77,7 +89,6 @@
         <a class="btn btn-outline-secondary btn-sm" href="/shipments">Reset</a>
       </div>
       <div class="col-auto ms-auto d-flex gap-2">
-        {% if user.role != ROLE_TYPE2 %}
         <button type="button" class="btn btn-outline-primary btn-sm"
                 onclick="downloadSelected()" title="Download checked customs invoice .xlsm files as one zip">
           Download Selected</button>
@@ -87,7 +98,6 @@
           Download {{ current_month }} Excel</a>
         {% else %}
         <button class="btn btn-outline-secondary btn-sm" disabled>No file to download</button>
-        {% endif %}
         {% endif %}
       </div>
     </form>
@@ -100,9 +110,11 @@
       <table class="table table-sm table-hover mb-0 shipments-table">
         <thead>
           <tr>
+            <th class="sticky-check text-center">
+              <input type="checkbox" class="form-check-input m-0"
+                     onclick="toggleAllFiles(this)" title="Check all">
+            </th>
             <th class="sticky-col">Customs Invoice</th>
-            <th style="width:22px">{% if user.role != ROLE_TYPE2 %}<input type="checkbox" class="form-check-input"
-                                          onclick="toggleAllFiles(this)" title="Check all">{% endif %}</th>
             <th>Date</th>
             <th>Fty Inv</th>
             <th>Shipper</th>
@@ -135,30 +147,32 @@
         <tbody>
           {% for r in rows %}
           <tr data-entry-id="{{ r.id }}">
+            <td class="sticky-check text-center">
+              {% if r.file_exists %}
+              <input type="checkbox" class="form-check-input file-check m-0" value="{{ r.id }}">
+              {% endif %}
+            </td>
             <td class="small text-nowrap sticky-col">
               {% if r.file_exists %}
-                {% if user.role == ROLE_TYPE2 and r.edit_ids %}
+                {% if user.role != ROLE_TYPE3 and r.edit_ids %}
                 <a href="/invoices/edit?ids={{ r.edit_ids }}"
                    title="Edit customs invoice (opens the first-generation edit page)">{{ r.file_name }}</a>
+                <a class="btn btn-sm btn-outline-secondary py-0" href="#" data-folder="{{ r.file_folder }}"
+                   data-name="{{ r.file_name }}" onclick="previewFromLink(this);return false"
+                   title="Preview {{ r.file_name }}">View</a>
                 {% else %}
                 <a href="#" data-folder="{{ r.file_folder }}" data-name="{{ r.file_name }}"
                    onclick="previewFromLink(this);return false"
                   title="Preview {{ r.file_name }}">{{ r.file_name }}</a>
                 {% endif %}
-                {% if user.role == ROLE_ADMIN and r.edit_ids %}
-                <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.edit_ids }}"
-                   title="Edit customs invoice (opens the first-generation edit page)">Edit Invoice</a>
-                {% endif %}
+                <a class="btn btn-sm btn-outline-success py-0"
+                   href="/api/download?folder={{ r.file_folder|urlencode }}&name={{ r.file_name|urlencode }}"
+                   title="Download {{ r.file_name }}">Download</a>
                 <button class="btn btn-sm btn-outline-info py-0" data-folder="{{ r.file_folder }}"
                         data-name="{{ r.file_name }}" onclick="historyFromBtn(this)"
                         title="Modification history">Log</button>
               {% else %}
                 <span class="text-muted" title="File missing">{{ r.file_name or '-' }}</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if r.file_exists and user.role != ROLE_TYPE2 %}
-              <input type="checkbox" class="form-check-input file-check" value="{{ r.id }}">
               {% endif %}
             </td>
             <td class="text-nowrap" data-field="date" data-value="{{ r.date or '' }}">{{ r.date or '-' }}</td>
@@ -190,18 +204,16 @@
             <td class="num" data-field="cbm" data-value="{{ r.cbm if r.cbm is not none else '' }}">{{ '%.3f'|format(r.cbm) if r.cbm is not none else '-' }}</td>
             <td class="small text-nowrap" data-field="machine_cabinet" data-value="{{ r.machine_cabinet or '' }}">{{ r.machine_cabinet or '-' }}</td>
             <td class="small text-nowrap" data-field="aux_cabinet" data-value="{{ r.aux_cabinet or '' }}">{{ r.aux_cabinet or '-' }}</td>
-            <td class="small text-nowrap fw-semibold"{% if user.role in [ROLE_TYPE3, ROLE_ADMIN] %} data-field="ref_id" data-value="{{ r.ref_id or '' }}"{% endif %}>{{ r.ref_id or '-' }}</td>
+            <td class="small text-nowrap fw-semibold" data-field="ref_id" data-value="{{ r.ref_id or '' }}">{{ r.ref_id or '-' }}</td>
             <td class="small text-muted text-nowrap cell-updated">
               {{ r.updated_at|localtime('%Y-%m-%d %H:%M') if r.updated_at else '-' }}
             </td>
             <td class="text-end text-nowrap">
-              {% if user.role != ROLE_TYPE2 %}
               <button class="btn btn-sm btn-outline-primary py-0 btn-edit" onclick="editRow(this)">Edit</button>
               <span class="edit-actions d-none">
                 <button class="btn btn-sm btn-success py-0" onclick="saveRow(this)" title="Save">✓</button>
                 <button class="btn btn-sm btn-outline-secondary py-0" onclick="cancelEdit(this)" title="Cancel">✗</button>
               </span>
-              {% endif %}
             </td>
           </tr>
           {% else %}
@@ -239,6 +251,8 @@
       <div class="modal-header py-2">
         <span class="fw-semibold small" id="preview-title">-</span>
         <div class="btn-group btn-group-sm ms-3" id="preview-sheets"></div>
+        <a class="btn btn-sm btn-outline-success py-0 ms-3 d-none" id="preview-download"
+           href="#" title="Download this customs invoice file">Download</a>
         <button type="button" class="btn-close ms-auto" onclick="closePreview()"></button>
       </div>
       <div class="modal-body p-1" style="height:78vh">
@@ -330,6 +344,10 @@ async function previewFile(folder, name) {
   });
 
   title.textContent = name;
+  const dl = document.getElementById('preview-download');
+  dl.href = '/api/download?folder=' + encodeURIComponent(folder) +
+            '&name=' + encodeURIComponent(name);
+  dl.classList.remove('d-none');
   if (!previewModal) {
     previewModal = new bootstrap.Modal(document.getElementById('preview-modal'));
   }
@@ -432,6 +450,9 @@ function downloadSelected() {
 }
 
 // ---- 行内编辑 ----
+// 权限分割：第一类 / 管理员全字段可编辑；第三类仅手动填入字段（含 ID）
+const EDITABLE_FIELDS = {{ editable_fields | tojson }};
+
 function modeBadge(value) {
   if (value === 'AIR') return '<span class="badge bg-info text-dark">AIR</span>';
   if (value === 'SEA') return '<span class="badge bg-primary">SEA</span>';
@@ -455,6 +476,7 @@ function editRow(btn) {
   tr.dataset.editing = '1';
   tr.querySelectorAll('td[data-field]').forEach(td => {
     const field = td.dataset.field;
+    if (!EDITABLE_FIELDS.includes(field)) return;
     const value = td.dataset.value || '';
     td.dataset.html = td.innerHTML;
     let el;
@@ -534,9 +556,9 @@ async function saveRow(btn) {
 
   tr.querySelectorAll('td[data-field]').forEach(td => {
     const el = td.querySelector('input, select');
-    const value = el ? el.value : '';
-    td.dataset.value = value;
-    td.innerHTML = displayValue(td.dataset.field, value);
+    if (!el) return;
+    td.dataset.value = el.value;
+    td.innerHTML = displayValue(td.dataset.field, el.value);
     delete td.dataset.html;
   });
   const updated = tr.querySelector('.cell-updated');

@@ -119,7 +119,7 @@
       </div>
       <div class="modal-body">
         <div class="row g-2">
-          {% if user.role in [ROLE_TYPE3, ROLE_ADMIN] %}
+          {% if user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
           <div class="col-6">
             <label class="form-label small mb-1">ID</label>
             <input type="text" class="form-control form-control-sm" id="sm-ref-id" placeholder="Fill ID">
@@ -157,7 +157,7 @@
         <div class="small text-muted mt-2">
           Click "Save" to update the Shipment List directly (no re-export needed); blank fields keep their current values.<br>
           If only ETD is filled, ETA is derived automatically (air +1 day, sea/truck +8 days).<br>
-          {% if user.role in [ROLE_TYPE3, ROLE_ADMIN] %}
+          {% if user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
           ID is stored in the platform only (not written into Excel) and is shown in "Invoice Details" as well.
           {% endif %}
         </div>
@@ -410,6 +410,17 @@ function setStatus(text, cls) {
   const el = document.getElementById('status');
   el.textContent = text || '';
   el.className = 'ms-auto small ' + (cls || 'text-muted');
+}
+
+// 会话失效（接口返回 login_required）：提示并跳转登录，登录后回到本页
+function handleLoginRequired(data) {
+  if (!data || !data.login_required) return false;
+  setStatus('Session expired, redirecting to login...', 'text-warning');
+  const next = data.next || (location.pathname + location.search);
+  setTimeout(() => {
+    location.href = '/login?next=' + encodeURIComponent(next);
+  }, 1200);
+  return true;
 }
 
 // ---- 单价：自动读取 + 手动填写 ----
@@ -761,11 +772,13 @@ async function doExport() {
     document.getElementById('save-info').innerHTML =
       'Generated and saved: ' + data.folder + '/' + data.filename + ' (generation #' + data.version + ')' +
       ' <a href="' + data.download + '" class="ms-1">Download file</a>' +
-      ' <a href="/shipments" class="ms-1">View Shipment List</a>' +
-      (data.list_download
-        ? '<br>Shipment List updated: ' + data.list_filename +
-          ' <a href="' + data.list_download + '" class="ms-1">Download</a>' +
-          ' <a href="' + (data.list_url || '/shipments') + '" class="ms-1">View Shipment List</a>'
+      (CAN_SHIPMENT_INFO
+        ? ' <a href="/shipments" class="ms-1">View Shipment List</a>' +
+          (data.list_download
+            ? '<br>Shipment List updated: ' + data.list_filename +
+              ' <a href="' + data.list_download + '" class="ms-1">Download</a>' +
+              ' <a href="' + (data.list_url || '/shipments') + '" class="ms-1">View Shipment List</a>'
+            : '')
         : '') +
       (data.track_changes
         ? '<br><span class="text-muted">Local track changes is enabled: see "Review - Track Changes" in Excel for later edits.</span>'
@@ -803,6 +816,7 @@ async function doReset() {
     setStatus('Reset error: ' + err, 'text-danger');
     return;
   }
+  if (handleLoginRequired(plan)) return;
   if (!plan.ok) {
     setStatus(plan.error || 'Reset failed', 'text-danger');
     return;
@@ -831,6 +845,7 @@ async function doReset() {
       headers: { 'Content-Type': 'application/json' },
     });
     const data = await res.json();
+    if (handleLoginRequired(data)) return;
     if (!data.ok) {
       setStatus(data.error || 'Reset failed', 'text-danger');
       return;

@@ -38,7 +38,7 @@ def main() -> None:
     check(len(i_cells) > 0, f"面料行 I 列有值（{len(i_cells)} 行）")
     fills = {c.fill.start_color.rgb[-6:] for _, c in i_cells}
     check("FFF2CC" in fills, f"查得到单价时 I 列为黄色底纹 {fills}")
-    warn_msgs = [m for m in res.messages if "未在单价表" in m]
+    warn_msgs = [m for m in res.messages if "has no unit price" in m]
     check(not warn_msgs, "单价齐全时无提醒消息")
     res.workbook.close()
 
@@ -54,7 +54,7 @@ def main() -> None:
             miss_fills.append(ws2[f"I{r}"].fill.start_color.rgb[-6:])
     check(miss_fills and all(f == "F8CBAD" for f in miss_fills),
           f"查不到单价时 I 列为橙色底纹 {set(miss_fills)}")
-    warn_msgs2 = [m for m in res2.messages if "未在单价表" in m]
+    warn_msgs2 = [m for m in res2.messages if "has no unit price" in m]
     check(len(warn_msgs2) == 1, f"有提醒消息: {warn_msgs2}")
     check("I24" in warn_msgs2[0], f"提醒包含单元格位置: {warn_msgs2[0]}")
     res2.workbook.close()

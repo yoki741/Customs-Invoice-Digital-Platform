@@ -43,6 +43,7 @@ from .converters.field_map import ALLOWED_KEYS, editable_cells, validate_form
 from .converters.univer_snapshot import workbook_to_snapshot
 from .models import (
     ROLE_ADMIN,
+    ROLE_TYPE1,
     ROLE_TYPE2,
     ROLE_TYPE3,
     ExportFileVersion,
@@ -700,7 +701,7 @@ def can_edit_shipment_info(user: Optional[User]) -> bool:
 
 
 def can_edit_ref_id(user: Optional[User]) -> bool:
-    """ID（ref_id）字段仅第三类账号与管理员可改（权限分割）。
+    """ID（ref_id）字段第一类 / 第三类账号与管理员可改（权限分割）。
 
     Args:
         user: 当前用户；None（系统调用）视为允许。
@@ -708,7 +709,7 @@ def can_edit_ref_id(user: Optional[User]) -> bool:
     Returns:
         是否可写 ID 字段。
     """
-    return user is None or user.role in (ROLE_TYPE3, ROLE_ADMIN)
+    return user is None or user.role in (ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN)
 
 
 #: 行内编辑可写字段（与 ShipmentListEntry 列名一致）
@@ -719,6 +720,31 @@ ENTRY_EDIT_FIELDS: tuple[str, ...] = (
     "vessel", "carrier", "container_type", "cbm",
     "machine_cabinet", "aux_cabinet", "ref_id",
 )
+
+#: 手动填入字段（装柜补充信息弹窗 + Shipment List 页手填），第三类账号仅可改这些
+MANUAL_EDIT_FIELDS: tuple[str, ...] = (
+    "package", "etd", "eta", "vessel", "carrier", "container_type", "cbm",
+    "machine_cabinet", "aux_cabinet", "ref_id",
+)
+
+
+def editable_entry_fields(user: Optional[User]) -> tuple[str, ...]:
+    """按角色返回 Shipment List 行内可编辑字段（权限分割）。
+
+    第一类账号 / 管理员拥有全部编辑权限；第三类账号仅手动填入字段；
+    第二类账号看不见装柜列表，无可编辑字段。
+
+    Args:
+        user: 当前用户；None（系统调用）视为全部可写。
+
+    Returns:
+        可编辑字段名元组（:data:`ENTRY_EDIT_FIELDS` 的子集）。
+    """
+    if user is None or user.role in (ROLE_TYPE1, ROLE_ADMIN):
+        return ENTRY_EDIT_FIELDS
+    if user.role == ROLE_TYPE3:
+        return MANUAL_EDIT_FIELDS
+    return ()
 
 #: 字段显示名（审计日志 / 修改记录共用，与 Shipment List 表头一致）
 ENTRY_FIELD_LABELS: dict[str, str] = {
@@ -1017,11 +1043,13 @@ def update_shipment_entry(
     previous_month = entry.month or ""
     old_values: dict[str, Any] = {f: getattr(entry, f) for f in ENTRY_EDIT_FIELDS}
 
-    # 权限分割：ID 仅第三类账号 / 管理员可改，其他人提交的值一律按原值回填
-    if not can_edit_ref_id(user):
-        payload = {**payload, "ref_id": entry.ref_id or ""}
+    # 权限分割：越权字段一律跳过、保留原值
+    # （第一类 / 管理员全字段；第三类仅手动填入字段，含 ID）
+    editable = set(editable_entry_fields(user))
 
     for field in ENTRY_EDIT_FIELDS:
+        if field not in editable:
+            continue
         raw = payload.get(field)
         text = "" if raw is None else str(raw).strip()
         if field in ("date", "etd", "eta"):

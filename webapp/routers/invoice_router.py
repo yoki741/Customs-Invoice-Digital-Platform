@@ -24,7 +24,6 @@ from ..auth import (
     require_type1,
     require_type1_or_2,
     require_type1_or_3,
-    require_type3,
 )
 from ..timefmt import fmt_local
 from ..converters.field_map import EDITABLE_FIELDS, EXTRA_FIELDS, validate_form
@@ -46,6 +45,7 @@ from ..service import (
     build_for_edit,
     build_snapshot,
     can_edit_ref_id,
+    editable_entry_fields,
     export_invoices,
     first_generation_ids,
     record_failure,
@@ -229,9 +229,9 @@ async def invoice_edit(
     # 返回列表链接（还原筛选条件），只允许 ?开头的安全查询串
     back_url = back if back.startswith("?") and len(back) < 500 else ""
     back_link = f"/invoices{back_url}" if back_url else "/invoices"
-    # 第二类账号没有发票列表页，返回 Shipment List（其编辑入口来源）
+    # 第二类账号没有发票列表页，也看不见 Shipment List，返回发票明细页
     if user.role == ROLE_TYPE2:
-        back_link = "/shipments"
+        back_link = "/details"
     id_list = _parse_ids(ids)
     invoices = _load_invoices(db, id_list)
     if not invoices:
@@ -329,10 +329,14 @@ async def shipment_list_page(
     mode: str = "",
     q: str = "",
     page: int = 1,
-    user: User = Depends(require_any),
+    user: User = Depends(require_type1_or_3),
     db: Session = Depends(get_db),
 ) -> object:
-    """装柜列表（Shipment List），全部角色可见（第二类账号从此进入报关发票编辑）。"""
+    """装柜列表（Shipment List）：第一类与第三类、管理员可见（第二类不可见）。
+
+    权限分割：第一类账号 / 管理员拥有全部编辑权限（含报关单编辑入口）；
+    第三类账号仅手动填入字段（含 ID）可改，报关单文件只预览。
+    """
     from core.shipment_list import month_path
 
     query = db.query(ShipmentListEntry)
@@ -386,8 +390,8 @@ async def shipment_list_page(
         r.file_folder = folder
         r.file_name = name
         r.file_exists = bool(name) and (OUTPUT_DIR / folder / name).is_file()
-        # 报关发票编辑入口（第二类账号）：进入第一次生成该文件时的发票组合，
-        # 保证编辑页与首次生成一致
+        # 报关发票编辑入口（第一类账号 / 管理员）：进入第一次生成该文件时的
+        # 发票组合，保证编辑页与首次生成一致
         key = (folder, name)
         if name and key not in first_ids:
             first_ids[key] = first_generation_ids(db, folder, name)
@@ -424,6 +428,7 @@ async def shipment_list_page(
             "page": page,
             "pages": max((total + size - 1) // size, 1),
             "total": total,
+            "editable_fields": list(editable_entry_fields(user)),
             "current_month": current_month,
             "download_name": path.name if path and path.exists() else "",
             "download_url": (
@@ -466,12 +471,12 @@ async def shipment_ref_id_save(
     mode: str = Form(""),
     q: str = Form(""),
     page: str = Form(""),
-    user: User = Depends(require_type3),
+    user: User = Depends(require_type1_or_3),
     db: Session = Depends(get_db),
 ) -> object:
     """保存装柜列表某行手动填写的 ID（仅存数据库，不写入 Excel）。
 
-    权限分割：ID 仅第三类账号与管理员可改。
+    权限分割：ID 由第一类 / 第三类账号与管理员可改。
     """
     from urllib.parse import urlencode
 

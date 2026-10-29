@@ -24,7 +24,7 @@
     <a class="side-link {% if request.url.path.startswith('/invoices') %}active{% endif %}" href="/invoices">
       <span class="ico">▤</span> Invoice List</a>
     {% endif %}
-    {% if user and user.role in [ROLE_TYPE1, ROLE_TYPE2, ROLE_TYPE3, ROLE_ADMIN] %}
+    {% if user and user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
     <a class="side-link {% if request.url.path.startswith('/shipments') %}active{% endif %}" href="/shipments">
       <span class="ico">☰</span> Shipment List</a>
     {% endif %}

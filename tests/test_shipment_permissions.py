@@ -2,11 +2,13 @@
 """端到端：Shipment List 权限分割。
 
 覆盖手工验证点：
-1. 报关发票列 = 第一列且冻结（sticky-col）；只有第二类账号（及管理员）能从这里
-   点击进入编辑页，且进入的是第一次生成该报关发票的页面（invoice_ids 取首次
-   生成记录，不是最新一次）；
-2. ID（ref_id）只有第三类账号 / 管理员可改：第三类可写，第一类提交被忽略
-   （保留原值），第一类直调 /ref-id 接口被拒，第二类不能行内编辑；
+1. Shipment List 第一 / 第三类与管理员可见，第二类看不见（403 且侧栏无入口）；
+   报关发票列 = 第一列且冻结（sticky-col），第一类（及管理员）由此点击进入
+   第一次生成该报关发票时的编辑页（invoice_ids 取首次生成记录，不是最新）；
+   第三类只预览。每行提供单文件 Download，预览弹窗内也可下载。
+2. 行内编辑权限：第一类 / 管理员全字段（含 ID）；第三类仅手动填入字段
+   （Package/ETD/ETA/船名/Carrier/柜型/CBM/机器柜/辅料柜/ID），越权字段
+   服务端保留原值；第二类无任何 Shipment List 编辑接口。
 3. 机器柜 / 辅料柜只在 Shipment List 页面行内编辑：可写、随月度 Excel 输出、
    编辑页弹窗不提供、重新导出不覆盖页面手填值。
 """
@@ -220,42 +222,55 @@ def _run(users: dict[str, str], db: Any) -> None:
     assert first_generation_ids(db, folder, filename) == FAKE_FIRST_IDS
     print("[OK] 准备完成：2 次真实生成 + 1 条更早的首次生成记录")
 
-    # ---- 1. 报关发票列 = 第一列 + 冻结；只有第二类（及管理员）从此进入编辑 ----
+    # ---- 1. 页面访问 + 入口权限 ----
     page = admin.get("/shipments").text
     assert page.index('class="sticky-col">Customs Invoice') < page.index("<th>Date</th>"), \
         "报关发票必须是第一列表头"
     assert "sticky-col" in page, "冻结列样式缺失"
     assert f"/invoices/edit?ids={FAKE_FIRST_IDS}" in page, "管理员编辑入口指向第一次生成"
-    assert "Edit Invoice" in page and "previewFromLink" in page, "管理员可预览可编辑"
+    assert 'title="Edit customs invoice' in page, "文件名是编辑链接"
+    assert 'id="preview-download"' in page, "预览弹窗提供下载按钮"
     print("[OK] 管理员视角：报关发票第一列且冻结，编辑入口 = 第一次生成的页面")
 
-    r = c2.get("/shipments")
-    assert r.status_code == 200, r.status_code
-    text2 = r.text
-    assert f"/invoices/edit?ids={FAKE_FIRST_IDS}" in text2, "第二类从报关发票列进入编辑"
-    assert 'title="Edit customs invoice' in text2
-    assert "Download Selected" not in text2, "第二类无批量下载"
-    assert 'onclick="editRow(this)"' not in text2, "第二类无行内编辑"
-    assert "file-check" not in text2.split("<script")[0], "第二类无下载勾选框"
-    print("[OK] 第二类视角：文件名即编辑链接（第一次生成），无下载/行内编辑")
+    text1 = c1.get("/shipments").text
+    assert c1.get("/shipments").status_code == 200
+    assert f"/invoices/edit?ids={FAKE_FIRST_IDS}" in text1, "第一类文件名进编辑页（第一次生成）"
+    assert 'title="Edit customs invoice' in text1
+    assert 'href="/api/download?folder=' in text1, "第一类可单文件下载"
+    assert "Download Selected" in text1 and 'onclick="editRow(this)"' in text1
+    assert 'const EDITABLE_FIELDS = ["date"' in text1, "第一类全字段可编辑"
+    print("[OK] 第一类视角：文件名进编辑页（第一次生成），可下载可预览全字段行内编辑")
 
-    r = c3.get("/shipments")
-    assert r.status_code == 200, r.status_code
-    text3 = r.text
+    r = c2.get("/shipments")
+    assert r.status_code == 403, r.status_code
+    assert 'href="/shipments"' not in c2.get("/details").text, "第二类侧栏无 Shipment List 入口"
+    r = c2.post(f"/api/shipments/{entry_id}/update", data=_row_form(entry, ref_id="X"))
+    assert r.status_code == 403, r.status_code
+    r = c2.get("/api/shipments/download-files", params={"ids": str(entry_id)})
+    assert r.status_code == 403, r.status_code
+    print("[OK] 第二类视角：看不见 Shipment List（页面/行内编辑/下载均 403）")
+
+    text3 = c3.get("/shipments").text
+    assert c3.get("/shipments").status_code == 200
     assert "/invoices/edit?ids=" not in text3, "第三类无编辑入口（只预览）"
     assert "previewFromLink" in text3 and "Download Selected" in text3
+    assert 'href="/api/download?folder=' in text3, "第三类可单文件下载"
     assert 'onclick="editRow(this)"' in text3, "第三类可行内编辑"
-    print("[OK] 第三类视角：仅预览，不提供报关发票编辑入口")
+    assert 'const EDITABLE_FIELDS = ["package"' in text3, "第三类仅手动填入字段可编辑"
+    assert 'title="Edit customs invoice' not in text3
+    print("[OK] 第三类视角：仅预览 + 手动填入字段行内编辑，无报关单编辑入口")
 
+    r = c1.get(f"/invoices/edit?ids={inv_id}")
+    assert r.status_code == 200, r.status_code
     r = c2.get(f"/invoices/edit?ids={inv_id}")
     assert r.status_code == 200, r.status_code
     r = c2.get("/api/invoices/snapshot", params={"ids": str(inv_id)})
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
     r = c3.get(f"/invoices/edit?ids={inv_id}")
     assert r.status_code == 403, r.status_code
-    print("[OK] 编辑页权限：第二类可进（快照可用），第三类 403")
+    print("[OK] 编辑页权限：第一类/第二类可进（快照可用），第三类 403")
 
-    # ---- 2. ID 字段仅第三类 / 管理员可改 ----
+    # ---- 2. ID 与字段编辑权限（第一类全字段 + 第三类手动字段，含 ID） ----
     form = _row_form(entry, ref_id="T3-ID-001")
     r = c3.post(f"/api/shipments/{entry_id}/update", data=form)
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
@@ -264,51 +279,85 @@ def _run(users: dict[str, str], db: Any) -> None:
     assert entry.ref_id == "T3-ID-001", entry.ref_id
     print("[OK] 第三类行内编辑 ID 生效")
 
-    form = _row_form(entry, ref_id="HACK-ID", vessel="PERM VESSEL")
+    orig_blading, orig_custom = entry.blading, entry.custom_no
+    form = _row_form(
+        entry,
+        ref_id="T1-ID-001",
+        vessel="PERM VESSEL",
+        shipper="T1 SHIPPER",
+    )
     r = c1.post(f"/api/shipments/{entry_id}/update", data=form)
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-001", f"第一类不得改动 ID，实际 {entry.ref_id}"
-    assert entry.vessel == "PERM VESSEL", "第一类其它字段照常可写"
-    print("[OK] 第一类提交 ID 被忽略（保留原值），其它字段正常保存")
+    assert entry.ref_id == "T1-ID-001", f"第一类可改 ID，实际 {entry.ref_id}"
+    assert entry.vessel == "PERM VESSEL" and entry.shipper == "T1 SHIPPER", "第一类全字段可写"
+    assert (entry.blading, entry.custom_no) == (orig_blading, orig_custom), "未提交字段保持不变"
+    print("[OK] 第一类行内编辑 ID + 手动字段 + 自动字段均生效")
 
-    r = c1.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "HACK-2"})
-    assert r.status_code == 403, r.status_code
-    r = c2.post(f"/api/shipments/{entry_id}/update", data=_row_form(entry, ref_id="X"))
-    assert r.status_code == 403, r.status_code
-    r = c3.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "T3-ID-002"})
-    assert r.status_code == 303, r.status_code
+    # 以第一类写入后的值为基准：第三类越权提交必须保留原值
+    keep_shipper, keep_blading, keep_custom = entry.shipper, entry.blading, entry.custom_no
+    form = _row_form(
+        entry,
+        ref_id="T3-ID-002",
+        shipper="T3 SHIPPER",
+        blading="T3 BLADING",
+        custom_no="T3-CUSTOM",
+    )
+    r = c3.post(f"/api/shipments/{entry_id}/update", data=form)
+    assert r.status_code == 200 and r.json()["ok"], r.text[:300]
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
     assert entry.ref_id == "T3-ID-002", entry.ref_id
-    print("[OK] /ref-id 接口仅第三类（第一类 403、第二类行内编辑 403）")
+    assert entry.shipper == keep_shipper, f"第三类不得改 Shipper，实际 {entry.shipper}"
+    assert entry.blading == keep_blading, f"第三类不得改 Blading，实际 {entry.blading}"
+    assert entry.custom_no == keep_custom, f"第三类不得改 Custom #，实际 {entry.custom_no}"
+    print("[OK] 第三类越权字段保留原值（Shipper/Blading/Custom #），手动字段与 ID 可写")
+
+    r = c1.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "T1-ID-002"})
+    assert r.status_code == 303, r.status_code
+    db.expire_all()
+    entry = db.get(ShipmentListEntry, entry_id)
+    assert entry.ref_id == "T1-ID-002", entry.ref_id
+    r = c3.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "T3-ID-003"})
+    assert r.status_code == 303, r.status_code
+    db.expire_all()
+    entry = db.get(ShipmentListEntry, entry_id)
+    assert entry.ref_id == "T3-ID-003", entry.ref_id
+    r = c2.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "T2-ID"})
+    assert r.status_code == 403, r.status_code
+    print("[OK] /ref-id 接口：第一类/第三类可写，第二类 403")
 
     page = admin.get(f"/invoices/edit?ids={inv_id}").text
     assert 'id="sm-ref-id"' in page, "管理员弹窗有 ID 输入"
     assert "CAN_SHIPMENT_INFO = true" in page
     page = c1.get(f"/invoices/edit?ids={inv_id}").text
-    assert 'id="sm-ref-id"' not in page, "第一类弹窗无 ID 输入"
+    assert 'id="sm-ref-id"' in page, "第一类弹窗有 ID 输入"
     page = c2.get(f"/invoices/edit?ids={inv_id}").text
     assert 'id="sm-ref-id"' not in page, "第二类弹窗无 ID 输入"
     assert "CAN_SHIPMENT_INFO = false" in page, "第二类生成后不弹装柜补充信息窗口"
-    print("[OK] 编辑页弹窗：ID 仅第三类/管理员可见，第二类不弹窗")
+    print("[OK] 编辑页弹窗：ID 第一类/第三类/管理员可见，第二类不弹窗")
 
-    r = c1.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "SNEAK-ID"})
+    r = c1.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "T1-ID-003"})
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-002", f"补充信息窗口也不得改 ID，实际 {entry.ref_id}"
-    r = c3.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "T3-ID-003"})
+    assert entry.ref_id == "T1-ID-003", entry.ref_id
+    r = c3.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "T3-ID-004"})
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-003", entry.ref_id
+    assert entry.ref_id == "T3-ID-004", entry.ref_id
     r = c2.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "T2-ID"})
     assert r.status_code == 403, r.status_code
-    print("[OK] 补充信息窗口：ID 仅第三类可写（第一类忽略、第二类 403）")
+    print("[OK] 补充信息窗口：ID 第一类/第三类可写，第二类 403")
 
     # ---- 3. 机器柜 / 辅料柜：仅 Shipment List 页手填 ----
+    # 先清空（防止上次测试残留同值导致无变更），再写入目标值
+    c3.post(
+        f"/api/shipments/{entry_id}/update",
+        data=_row_form(entry, machine_cabinet="", aux_cabinet=""),
+    )
     form = _row_form(entry, machine_cabinet="MSKU-PERM-1", aux_cabinet="AUX-PERM-1")
     r = c3.post(f"/api/shipments/{entry_id}/update", data=form)
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
@@ -349,7 +398,7 @@ def _run(users: dict[str, str], db: Any) -> None:
     entry = db.get(ShipmentListEntry, entry_id)
     assert entry.machine_cabinet == "MSKU-PERM-1" and entry.aux_cabinet == "AUX-PERM-1", \
         "重新导出不得覆盖页面手填的机器柜/辅料柜"
-    assert entry.ref_id == "T3-ID-003", "重新导出也不得抹掉 ID"
+    assert entry.ref_id == "T3-ID-004", "重新导出也不得抹掉 ID"
     print("[OK] 重新导出后机器柜/辅料柜/ID 保留页面手填值")
 
 
