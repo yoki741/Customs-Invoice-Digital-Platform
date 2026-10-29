@@ -150,6 +150,22 @@ const InvoiceGrid = {
     state.onChange = onChange || null;
 
     if (state.univerAPI) {
+      // 同一 unit id 重复 createWorkbook 会抛 "cannot create a unit with the same
+      // unit id"：先销毁旧工作簿（预览二次打开、编辑页重置重新载入都走这里）
+      try {
+        const active = state.univerAPI.getActiveWorkbook?.();
+        const unitId =
+          (active && (active.getUnitId?.() || active.getId?.())) || snapshot.id;
+        if (unitId) {
+          if (typeof state.univerAPI.disposeUnit === 'function') {
+            state.univerAPI.disposeUnit(unitId);
+          } else if (typeof active?.dispose === 'function') {
+            active.dispose();
+          }
+        }
+      } catch (e) {
+        console.warn('dispose previous workbook failed', e);
+      }
       state.univerAPI.createWorkbook(snapshot);
       return true;
     }

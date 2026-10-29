@@ -331,7 +331,19 @@ async function previewFile(folder, name) {
 
   const lock = {};
   Object.values(data.snapshot.sheets || {}).forEach(s => { lock[s.name] = []; });
-  InvoiceGrid.load('preview-grid', data.snapshot, lock, null);
+
+  // 先弹出弹窗再渲染：容器隐藏时 Univer 画布尺寸为 0，会渲染空白
+  if (!previewModal) {
+    previewModal = new bootstrap.Modal(document.getElementById('preview-modal'));
+  }
+  previewModal.show();
+  try {
+    InvoiceGrid.load('preview-grid', data.snapshot, lock, null);
+  } catch (err) {
+    title.textContent = 'Preview failed';
+    alert('Preview render failed: ' + err);
+    return;
+  }
 
   const box = document.getElementById('preview-sheets');
   box.innerHTML = '';
@@ -348,10 +360,6 @@ async function previewFile(folder, name) {
   dl.href = '/api/download?folder=' + encodeURIComponent(folder) +
             '&name=' + encodeURIComponent(name);
   dl.classList.remove('d-none');
-  if (!previewModal) {
-    previewModal = new bootstrap.Modal(document.getElementById('preview-modal'));
-  }
-  previewModal.show();
 }
 
 function closePreview() {

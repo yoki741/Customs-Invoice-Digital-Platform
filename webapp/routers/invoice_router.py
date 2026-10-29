@@ -898,7 +898,8 @@ async def file_history(
         .all()
     )
     if not exports:
-        return JSONResponse({"ok": False, "error": "File record not found"}, status_code=404)
+        # 无生成记录：返回空时间线（前端显示「无修改记录」），不报错
+        return JSONResponse({"ok": True, "folder": folder, "name": name, "rows": []})
 
     inv_ids: set[int] = set()
     for row in exports:
