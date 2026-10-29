@@ -16,7 +16,9 @@ sys.path.insert(0, str(ROOT))
 import openpyxl  # noqa: E402
 
 from core.shipment_list import (  # noqa: E402
+    ShipmentRow,
     _containers,
+    _read_packages,
     build_row,
     build_row_from_result,
     eta_for,
@@ -81,7 +83,10 @@ def _result_workbook() -> openpyxl.Workbook:
     ws["A38"] = "CONTAINER NO / SEAL NO:"
     ws["A39"] = "FBLU0186990 / SEAL123"
     ws["A40"] = "TEMU9126356 / SEAL456"
+    ws["A42"] = "BY AIR"
     pkl = wb.create_sheet("PKL1")
+    pkl["A24"] = 307
+    pkl["B24"] = "PACKS"
     pkl["K24"] = 6900
     return wb
 
@@ -105,14 +110,28 @@ def main() -> None:
 
     check(
         _containers("", ["SZLU9863221/KAL0586", "PART OF 1X45HQ"])
-        == ["SZLU9863221"],
-        "柜号排除说明性文字 PART OF 1X45HQ",
+        == ["SZLU9863221/KAL0586", "PART OF 1X45HQ"],
+        "柜号原样逐格展示（不抽取不改写）",
+    )
+    check(
+        _containers("A1\n\nB2", []) == ["A1", "", "B2"],
+        "柜号按行对应 1-4 格，中间空行保留位置",
     )
 
     etd = date(2026, 10, 20)
     check(eta_for("AIR", etd) == date(2026, 10, 21), "ETA 空运 +1")
     check(eta_for("SEA", etd) == date(2026, 10, 28), "ETA 海运 +8")
     check(eta_for("TRUCK", etd) == date(2026, 10, 28), "ETA 汽运 +8")
+
+    wb_txt = openpyxl.Workbook()
+    ws_txt = wb_txt.active
+    ws_txt["A1"] = 850
+    ws_txt["B1"] = "PACKS"
+    check(_read_packages(ws_txt) == 850, "取 PACKS 左侧单元格数字")
+    ws_txt["C3"] = "307 PACKS"
+    check(_read_packages(ws_txt) == 1157, "同格文本 307 PACKS 也取 packs 前数字")
+    check(_read_packages(wb_txt.create_sheet("blank")) is None, "PKL 无 PACKS 时留空")
+    wb_txt.close()
 
     row = build_row(
         [_source()],
@@ -131,7 +150,7 @@ def main() -> None:
     check(row.shipper == "LEFEI", "Shipper 取供应商代码")
     check(row.est_vco == "Vanco", "EST/VCO 取我司工厂")
     check(row.package == 307, "Package 取件数")
-    check(row.containers == ["FBLU0186990"], "柜号自动提取")
+    check(row.containers == ["FBLU0186990 / SEAL123"], "柜号原样逐格展示")
     check(row.pol == "Ningbo, China", "POL 去掉标签前缀")
     check(row.etd == date(2026, 10, 21), "ETD 取发票日期")
     check(row.eta == date(2026, 10, 29), "ETA = ETD + 8")
@@ -176,22 +195,32 @@ def main() -> None:
         check(res_row.blading == "SHSJ2610051A", "清关文件 Blading 取发票号")
         check(res_row.fty_inv == "26LF0845-1", "清关文件 Fty Inv 取 REF")
         check(res_row.pol == "NINGBO, CHINA", "清关文件 POL 取 A18")
-        check(res_row.containers == ["FBLU0186990", "TEMU9126356"], "清关文件柜号")
+        check(
+            res_row.containers
+            == ["FBLU0186990 / SEAL123", "TEMU9126356 / SEAL456", "", "BY AIR"],
+            "清关文件柜号逐格对应 Container 1-4（空格保留位置）",
+        )
         check(res_row.nw_kg == 6664, "清关文件净重=报关净重")
         check(res_row.gw_kg == 6900, "清关文件毛重取 PKL1!K24")
         check(res_row.description == "JC / POLY", "清关文件分类去重")
         check(res_row.mode == "SEA", "清关文件运输方式")
-        check(res_row.package is None, "Package 留空待人工")
+        check(res_row.package == 307, "清关文件 Package 取 PKL PACKS 前的数字")
         check(res_row.etd is None and res_row.eta is None, "ETD/ETA 留空")
         check(res_row.vessel == "" and res_row.carrier == "", "VESSEL/Carrier 留空")
         check(res_row.container_type == "" and res_row.cbm is None, "柜型/CBM 留空待人工")
+        check(
+            res_row.machine_cabinet == "" and res_row.aux_cabinet == "",
+            "机器柜/辅料柜 留空（仅 Shipment List 页手填）",
+        )
     finally:
         res_wb.close()
 
-    check(len(row.cells()) == 22, "cells() 返回 22 列")
+    check(len(row.cells()) == 24, "cells() 返回 24 列")
 
     row.container_type = "40HQ"
     row.cbm = 45.5
+    row.machine_cabinet = "MSKU1234567"
+    row.aux_cabinet = "TGHU7654321"
     out = Path(tempfile.gettempdir()) / "shipment_list_test.xlsx"
     write_workbook([row, row_eastex], out)
     wb = openpyxl.load_workbook(out)
@@ -204,13 +233,96 @@ def main() -> None:
         check(ws["A6"].value is None, "模板说明行已清空，避免与数据冲突")
         check("mmm" in ws["A2"].number_format, "日期格式沿用模板")
         check(ws["A2"].border.left.style == "thin", "边框沿用模板")
-        check(ws["U1"].value == "Container Type" and ws["V1"].value == "CBM",
-              "新列表头 柜型/CBM")
+        check(ws["U1"].value == "柜型" and ws["V1"].value == "CBM"
+              and ws["W1"].value == "机器柜" and ws["X1"].value == "辅料柜"
+              and ws["Y1"].value == "ID",
+              "新列表头 柜型/CBM/机器柜/辅料柜/ID")
         check(ws["U2"].value == "40HQ" and ws["V2"].value == 45.5,
               "第 2 行写入柜型/CBM")
+        check(ws["W2"].value == "MSKU1234567" and ws["X2"].value == "TGHU7654321",
+              "第 2 行写入机器柜/辅料柜")
     finally:
         wb.close()
     out.unlink(missing_ok=True)
+
+    # --- 装柜列表 ref_id → 发票明细反查映射 ---
+    from sqlalchemy import create_engine as _create_engine
+    from sqlalchemy.orm import sessionmaker as _sessionmaker
+
+    from webapp.models import Base as _Base, ShipmentListEntry as _SLE
+    from webapp.service import shipment_ref_map as _shipment_ref_map
+
+    _engine = _create_engine("sqlite://")
+    _Base.metadata.create_all(_engine)
+    _Session = _sessionmaker(bind=_engine)
+    _db = _Session()
+    _db.add_all([
+        _SLE(custom_no="A_CT", ref_id="ID-100", invoice_ids="[1,2]"),
+        _SLE(custom_no="B_BT", ref_id="ID-200", invoice_ids="[3]"),
+        _SLE(custom_no="C_CT", ref_id="", invoice_ids="[4]"),
+        _SLE(custom_no="D_CT", ref_id="ID-NEW", invoice_ids="[1]"),
+    ])
+    _db.commit()
+    _m = _shipment_ref_map(_db)
+    check(_m.get(1) == "ID-NEW", "ref_id 反查：同发票取最新一条")
+    check(_m.get(2) == "ID-100", "ref_id 反查：按发票 id 映射")
+    check(_m.get(3) == "ID-200", "ref_id 反查：另一票映射")
+    check(_m.get(4) is None, "ref_id 反查：未填 ID 不映射")
+    _db.close()
+    _engine.dispose()
+
+    # --- record_shipment_list 的 ref_id 落库语义（弹窗手填 → 仅存数据库） ---
+    import webapp.service as _service
+    from webapp.models import Invoice as _Invoice
+    from webapp.service import record_shipment_list as _record
+
+    _orig_rebuild = _service.rebuild_shipment_month
+    _service.rebuild_shipment_month = (
+        lambda db, month: Path(tempfile.gettempdir()) / f"shipment_list_{month}.xlsx"
+    )
+    try:
+        _engine2 = _create_engine("sqlite://")
+        _Base.metadata.create_all(_engine2)
+        _db2 = _sessionmaker(bind=_engine2)()
+        _inv = _Invoice(invoice_no="T-1", source_filename="t.xlsm", source_file="t.xlsm")
+        _db2.add(_inv)
+        _db2.commit()
+        _row = ShipmentRow(
+            date=date(2026, 10, 22),
+            fty_inv="PO-1",
+            shipper="LEFEI",
+            est_vco="Vanco",
+            custom_no="T-1_CT",
+        )
+        _record(_db2, None, [_inv], _row, ref_id="ID-777")
+        _e = _db2.query(_SLE).one()
+        check(_e.ref_id == "ID-777", "导出弹窗 ref_id 写入装柜记录")
+        _record(_db2, None, [_inv], _row, ref_id="")
+        _db2.refresh(_e)
+        check(_e.ref_id == "ID-777", "ref_id 留空保留原值（重导出不抹掉）")
+        _record(_db2, None, [_inv], _row, ref_id="ID-888")
+        _db2.refresh(_e)
+        check(_e.ref_id == "ID-888", "ref_id 再次填写可覆盖")
+        check(_db2.query(_SLE).count() == 1, "同一 source_key 重导出只更新不新增")
+        check("ref_id" not in _row.as_dict(), "as_dict 不含 ref_id（Excel 行无此列）")
+        # 机器柜/辅料柜仅 Shipment List 页手填：导出行恒为空，重导出不得覆盖
+        _e.machine_cabinet = "MSKU1234567"
+        _e.aux_cabinet = "TGHU7654321"
+        _db2.commit()
+        _record(_db2, None, [_inv], _row, ref_id="")
+        _db2.refresh(_e)
+        check(
+            _e.machine_cabinet == "MSKU1234567" and _e.aux_cabinet == "TGHU7654321",
+            "机器柜/辅料柜 重导出保留页面手填值",
+        )
+        check(
+            "machine_cabinet" in _row.as_dict() and "aux_cabinet" in _row.as_dict(),
+            "as_dict 含机器柜/辅料柜",
+        )
+    finally:
+        _service.rebuild_shipment_month = _orig_rebuild
+        _db2.close()
+        _engine2.dispose()
 
     if fails:
         print(f"\n失败 {len(fails)} 项")

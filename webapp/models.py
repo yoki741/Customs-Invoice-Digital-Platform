@@ -32,10 +32,12 @@ from core.config import DB_PATH, ensure_dirs
 ROLE_ADMIN = "admin"
 ROLE_TYPE1 = "type1"  # 第一类账号：列表 + 编辑 + 导出
 ROLE_TYPE2 = "type2"  # 第二类账号：仅查看发票明细
+ROLE_TYPE3 = "type3"  # 第三类账号：Shipment List + 报关发票
 ROLE_LABELS = {
-    ROLE_ADMIN: "管理员",
-    ROLE_TYPE1: "第一类（业务/关务）",
-    ROLE_TYPE2: "第二类（明细查看）",
+    ROLE_ADMIN: "Admin",
+    ROLE_TYPE1: "Type 1 (Business / Customs)",
+    ROLE_TYPE2: "Type 2 (Details Viewer)",
+    ROLE_TYPE3: "Type 3 (Shipment List / Customs Invoices)",
 }
 
 
@@ -44,9 +46,9 @@ CHECK_PENDING = "pending"
 CHECK_PASSED = "passed"
 CHECK_FAILED = "failed"
 CHECK_LABELS = {
-    CHECK_PENDING: "待核对",
-    CHECK_PASSED: "核对通过",
-    CHECK_FAILED: "有问题",
+    CHECK_PENDING: "Pending Check",
+    CHECK_PASSED: "Check Passed",
+    CHECK_FAILED: "Issues Found",
 }
 CHECK_STYLES = {
     CHECK_PENDING: "secondary",
@@ -221,6 +223,10 @@ class ShipmentListEntry(Base):
     carrier: Mapped[str] = mapped_column(String(128), default="")
     container_type: Mapped[str] = mapped_column(String(64), default="")
     cbm: Mapped[Optional[float]] = mapped_column(Float)
+    # 机器柜 / 辅料柜：仅 Shipment List 页面手动编辑（不随导出写入、不进 .xlsm）
+    machine_cabinet: Mapped[str] = mapped_column(String(64), default="")
+    aux_cabinet: Mapped[str] = mapped_column(String(64), default="")
+    ref_id: Mapped[str] = mapped_column(String(128), default="")
     invoice_ids: Mapped[str] = mapped_column(Text, default="[]")
     created_by: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -326,7 +332,7 @@ def _migrate_check_fields() -> None:
 
 
 def _migrate_shipment_fields() -> None:
-    """为已有 shipment_list_entries 表补上柜型 / CBM / source_key 列（SQLite ALTER）。"""
+    """为已有 shipment_list_entries 表补上柜型 / CBM / 机器柜 / 辅料柜 / source_key / ref_id 列（SQLite ALTER）。"""
     with engine.begin() as conn:
         existing = {
             row[1]
@@ -337,7 +343,10 @@ def _migrate_shipment_fields() -> None:
         for name, decl in (
             ("container_type", "VARCHAR(64) DEFAULT ''"),
             ("cbm", "FLOAT"),
+            ("machine_cabinet", "VARCHAR(64) DEFAULT ''"),
+            ("aux_cabinet", "VARCHAR(64) DEFAULT ''"),
             ("source_key", "VARCHAR(512) DEFAULT ''"),
+            ("ref_id", "VARCHAR(128) DEFAULT ''"),
         ):
             if name not in existing:
                 conn.exec_driver_sql(

@@ -162,6 +162,22 @@ a:hover { color: var(--brand-dark); }
 .table td.wrap { white-space: normal; min-width: 240px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12.5px; }
 
+/* 宽表滚动区：高度随视口收窄（脚本再按实际位置微调），
+   横/竖滚动条都停在可视区内，长表格不再“看不到水平滚动条” */
+.table-responsive {
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+}
+.table-responsive thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fafbfc;
+  /* collapse 表格吸顶后 border 会闪烁，改用 inset 阴影画表头线 */
+  border-bottom: none;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
 /* ---------- 徽章 ---------- */
 .badge { font-weight: 500; font-size: 11.5px; padding: .32em .68em; border-radius: 6px; letter-spacing: .1px; }
 /* 运输方式：柔和底 + 深字 */

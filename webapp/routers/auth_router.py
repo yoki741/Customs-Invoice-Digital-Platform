@@ -20,7 +20,7 @@ from ..auth import (
     require_user,
     verify_password,
 )
-from ..models import ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2, User, get_db
+from ..models import ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2, ROLE_TYPE3, User, get_db
 from ..templates_setup import templates
 
 router = APIRouter(tags=["auth"])
@@ -59,6 +59,7 @@ HOME_BY_ROLE = {
     ROLE_ADMIN: "/admin",
     ROLE_TYPE1: "/invoices",
     ROLE_TYPE2: "/details",
+    ROLE_TYPE3: "/shipments",
 }
 
 
@@ -105,7 +106,7 @@ async def login(
     ip = request.client.host if request.client else "unknown"
     fail_key = f"{ip}|{username.strip()}"
     if _login_blocked(fail_key):
-        request.session["flash_error"] = "登录失败次数过多，请 1 分钟后再试"
+        request.session["flash_error"] = "Too many failed login attempts, please try again in 1 minute"
         logger.warning("登录限流拦截: {}", fail_key)
         return RedirectResponse(
             f"/login?next={_safe_next(next)}", status_code=303
@@ -115,7 +116,7 @@ async def login(
     user: Optional[User] = db.query(User).filter(User.username == name).one_or_none()
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
         _record_login_fail(fail_key)
-        request.session["flash_error"] = "用户名或密码错误，或账号已停用"
+        request.session["flash_error"] = "Incorrect username or password, or the account is disabled"
         return RedirectResponse(
             f"/login?next={_safe_next(next)}", status_code=303
         )
@@ -123,7 +124,7 @@ async def login(
     _clear_login_fails(fail_key)
     request.session.clear()
     request.session["uid"] = user.id
-    audit(db, user, "login", f"{user.username} 登录（{user.role}）")
+    audit(db, user, "login", f"{user.username} logged in ({user.role})")
     return RedirectResponse(_safe_next(next) if next else _home_for(user), status_code=303)
 
 
@@ -133,7 +134,7 @@ async def logout(request: Request, db: Session = Depends(get_db)) -> object:
     if uid:
         user = db.get(User, uid)
         if user:
-            audit(db, user, "logout", f"{user.username} 登出")
+            audit(db, user, "logout", f"{user.username} logged out")
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
@@ -176,16 +177,16 @@ async def change_password(
         return RedirectResponse("/change-password", status_code=303)
 
     if not verify_password(old_password, user.password_hash):
-        return fail("原密码错误")
+        return fail("Current password is incorrect")
     if len(new_password) < 6:
-        return fail("新密码至少 6 位")
+        return fail("New password must be at least 6 characters")
     if new_password != confirm_password:
-        return fail("两次输入的新密码不一致")
+        return fail("The two new passwords do not match")
     if new_password == old_password:
-        return fail("新密码不能与原密码相同")
+        return fail("New password cannot be the same as the current one")
 
     user.password_hash = hash_password(new_password)
     db.commit()
-    audit(db, user, "password.change", f"{user.username} 修改了自己的密码")
-    request.session["flash_ok"] = "密码已修改"
+    audit(db, user, "password.change", f"{user.username} changed their own password")
+    request.session["flash_ok"] = "Password changed"
     return RedirectResponse("/change-password", status_code=303)

@@ -23,12 +23,8 @@ from .source_reader import SourceData
 
 SHEET_NAME = "Sheet1"
 FIRST_DATA_ROW = 2
-EXPECTED_COLS = 22
+EXPECTED_COLS = 24
 
-_CONTAINER_RE = re.compile(r"[A-Z]{4}\d{7}")
-# 兜底分支用于分隔符拆分的柜号，需形如柜号（4 字母 + 7 位，或旧式 3 字母 + 6 位），
-# 避免把 "PART OF 1X45HQ" 这类说明性文字当作柜号
-_LOOSE_CONTAINER_RE = re.compile(r"^[A-Z]{3,4}\d{6,7}$")
 _PLACE_PREFIXES = (
     "port of loading:",
     "port of loading：",
@@ -66,9 +62,11 @@ class ShipmentRow:
     carrier: str = ""
     container_type: str = ""
     cbm: Optional[float] = None
+    machine_cabinet: str = ""
+    aux_cabinet: str = ""
 
     def cells(self) -> list[Any]:
-        """按模板 A-T 列返回单元格值。"""
+        """按模板 A-X 列返回单元格值。"""
         values: list[Any] = [
             self.date,
             self.fty_inv,
@@ -93,6 +91,8 @@ class ShipmentRow:
                 self.carrier,
                 self.container_type,
                 self.cbm,
+                self.machine_cabinet,
+                self.aux_cabinet,
             ]
         )
         return values
@@ -122,6 +122,8 @@ class ShipmentRow:
             "carrier": self.carrier,
             "container_type": self.container_type,
             "cbm": self.cbm,
+            "machine_cabinet": self.machine_cabinet,
+            "aux_cabinet": self.aux_cabinet,
         }
 
 
@@ -218,25 +220,19 @@ def _clean_place(value: str) -> str:
 
 
 def _containers(manual_info: str, source_numbers: Sequence[str]) -> list[str]:
-    """提取柜号：优先手工填写内容，其次源文件柜号，最多 4 个。"""
-    found: list[str] = []
-    for text in (manual_info, *source_numbers):
-        if not text:
-            continue
-        upper = text.upper()
-        matches = _CONTAINER_RE.findall(upper)
-        if matches:
-            candidates = matches
-        else:
-            candidates = [
-                part.strip()
-                for part in re.split(r"[,;/\n\r]+", text)
-                if _LOOSE_CONTAINER_RE.fullmatch(part.strip().upper())
-            ]
-        for item in candidates:
-            if item and item not in found:
-                found.append(item)
-    return found[:4]
+    """柜号逐格对应 Container 1-4：格子里填什么就展示什么，不做抽取改写。
+
+    手工填写的 container_info 按行拆分，第 N 行对应报关清单
+    CONTAINER NO / SEAL NO: 往下第 N 个单元格（Container N）；
+    没有手工填写时依次取源文件柜号。
+    """
+    if manual_info:
+        cells = [str(line or "").strip() for line in manual_info.split("\n")[:4]]
+    else:
+        cells = [_text(number) for number in source_numbers[:4]]
+    while cells and not cells[-1]:
+        cells.pop()
+    return cells
 
 
 def build_row(
@@ -297,7 +293,7 @@ def build_row(
         package=package or None,
         blading=bill_no,
         containers=_containers(
-            _text(manual.get("container_info")),
+            str(manual.get("container_info") or ""),
             [source.container_number or "" for source in sources],
         ),
         nw_kg=round(sum(_num(source.net_weight) for source in sources), 3),
@@ -350,7 +346,10 @@ def _read_fabric_types(ws: Any) -> list[str]:
 
 
 def _read_containers(ws: Any) -> list[str]:
-    """读取 INV1 的 CONTAINER 区（最多 3 行）并提取柜号。"""
+    """读取 INV1 的 CONTAINER NO / SEAL NO: 往下第 1-4 格。
+
+    格子里填什么，装柜列表 Container 1-4 就逐个展示什么样（不抽取柜号）。
+    """
     container_row: Optional[int] = None
     for row in range(1, 61):
         value = ws[f"A{row}"].value
@@ -359,12 +358,39 @@ def _read_containers(ws: Any) -> list[str]:
             break
     if container_row is None:
         return []
-    lines = [
-        str(ws[f"A{row}"].value)
-        for row in range(container_row + 1, container_row + 4)
-        if ws[f"A{row}"].value
-    ]
-    return _containers("", lines)
+    cells = [_text(ws[f"A{container_row + 1 + i}"].value) for i in range(4)]
+    while cells and not cells[-1]:
+        cells.pop()
+    return cells
+
+
+def _read_packages(ws: Any) -> Optional[float]:
+    """读取 PKL 中 PACKS 前面的数字（如 307 PACKS → 307）。
+
+    优先取同一单元格文本里紧挨 "packs" 前的数字，否则取同一行 PACKS
+    左侧最近的数值单元格；出现多行 PACKS 时求和。找不到返回 None。
+    """
+    total = 0.0
+    found = False
+    for row in ws.iter_rows():
+        for cell in row:
+            text = _text(cell.value)
+            if "PACKS" not in text.upper():
+                continue
+            match = re.search(r"([\d][\d.,]*)\s*PACKS", text, re.IGNORECASE)
+            if match:
+                total += _num(match.group(1).replace(",", ""))
+                found = True
+                continue
+            for col in range(cell.column - 1, 0, -1):
+                value = ws.cell(row=cell.row, column=col).value
+                if value in (None, ""):
+                    continue
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    total += float(value)
+                    found = True
+                break
+    return total if found else None
 
 
 def build_row_from_result(
@@ -382,7 +408,9 @@ def build_row_from_result(
     - Fty Inv = INV1 REF 行，POL = INV1!A18（陆运 A19）
     - 分类 = INV1 D 列，集装箱 = INV1 CONTAINER 区
     - 净重 = 报关净重（传入 customs_weight），毛重 = PKL1!K24
-    - Package / ETD / VESSEL / Carrier / 柜型 / CBM 为手动字段，留空供人工补齐
+    - Package = PKL1 中 PACKS 前面的数字
+    - ETD / VESSEL / Carrier / 柜型 / CBM / 机器柜 / 辅料柜 为手动字段，留空供人工补齐
+      （机器柜 / 辅料柜仅在 Shipment List 页面行内编辑，不随导出写入）
     """
     ws_inv1 = workbook["INV1"]
 
@@ -400,8 +428,15 @@ def build_row_from_result(
     containers = _read_containers(ws_inv1)
 
     gw_kg = 0.0
+    package: Optional[float] = None
     if "PKL1" in workbook.sheetnames:
-        gw_kg = _num(workbook["PKL1"]["K24"].value)
+        ws_pkl = workbook["PKL1"]
+        gw_kg = _num(ws_pkl["K24"].value)
+        package = _read_packages(ws_pkl)
+    if package is not None:
+        package = round(package, 3)
+        if package == int(package):
+            package = int(package)
 
     return ShipmentRow(
         date=row_date,
@@ -409,7 +444,7 @@ def build_row_from_result(
         shipper=shipper,
         est_vco=resolved_company,
         custom_no=f"{bill_no}_{suffix_for(resolved_company)}" if bill_no else "",
-        package=None,
+        package=package or None,
         blading=bill_no,
         containers=containers,
         nw_kg=round(_num(customs_weight), 3),
@@ -423,6 +458,8 @@ def build_row_from_result(
         carrier="",
         container_type="",
         cbm=None,
+        machine_cabinet="",
+        aux_cabinet="",
     )
 
 
@@ -434,6 +471,30 @@ def month_of(value: Optional[date]) -> str:
 def month_path(month: str) -> Path:
     """月度装柜列表文件路径（month 需为 YYYY-MM）。"""
     return SHIPMENT_LIST_DIR / f"Shipment List {month}.xlsx"
+
+
+def _migrate_template_headers(ws: Any) -> None:
+    """兼容旧版模板表头：ID 原在 W 列，让位给机器柜 / 辅料柜后移到 Y 列。
+
+    模板文件本身已更新时此处无操作；模板被占用改不了时也能保证
+    生成文件的表头与 cells() 列序（W=机器柜、X=辅料柜）一致。
+    """
+    if str(ws["W1"].value or "").strip() != "ID" or ws["Y1"].value:
+        return
+    src = ws["W1"]
+    ws["W1"].value = "机器柜"
+    ws["X1"].value = "辅料柜"
+    ws["Y1"].value = "ID"
+    for dst in (ws["X1"], ws["Y1"]):
+        dst.font = copy(src.font)
+        dst.border = copy(src.border)
+        dst.fill = copy(src.fill)
+        dst.alignment = copy(src.alignment)
+        dst.number_format = src.number_format
+    width = ws.column_dimensions["W"].width
+    if width:
+        ws.column_dimensions["X"].width = width
+        ws.column_dimensions["Y"].width = width
 
 
 def write_workbook(
@@ -450,6 +511,7 @@ def write_workbook(
     workbook = openpyxl.load_workbook(str(source_template))
     try:
         ws = workbook[SHEET_NAME]
+        _migrate_template_headers(ws)
         for row in range(FIRST_DATA_ROW, ws.max_row + 1):
             for col in range(1, EXPECTED_COLS + 1):
                 ws.cell(row=row, column=col).value = None

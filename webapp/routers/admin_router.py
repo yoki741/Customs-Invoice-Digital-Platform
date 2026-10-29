@@ -11,9 +11,11 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, noload
 
 from ..auth import ROLE_ALL, audit, hash_password, require_admin, require_csrf, require_type1
+from ..timefmt import fmt_local
 from ..importer import import_source_file, save_upload, scan_uploads
 from ..models import ROLE_LABELS, AuditLog, ExportJob, Invoice, User, get_db
 from ..templates_setup import templates
+from .invoice_router import invoice_list_context
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -27,15 +29,15 @@ def _friendly_import_error(exc: Exception) -> str:
     text = str(exc)
     lowered = text.lower()
     if "does not support" in lowered and "file format" in lowered:
-        return "文件格式不支持，请上传 .xlsm / .xlsx Excel 文件"
+        return "Unsupported file format, please upload an .xlsm / .xlsx Excel file"
     if "is not a zip file" in lowered or "cannot open zlib" in lowered:
-        return "文件已损坏或不是有效的 Excel 文件，请检查后重新上传"
-    if "缺少 InputTable" in text:
+        return "The file is corrupted or not a valid Excel file, please check and upload again"
+    if "InputTable worksheet" in text:
         return text.replace("'", "").strip("'")
     if "Invoice No" in text:
         return text.replace("'", "").strip("'")
     if "PermissionError" in type(exc).__name__ or "permission" in lowered:
-        return "文件读取被拒绝，可能被其他程序占用，请关闭后重试"
+        return "File access was rejected, it may be open in another program, please close it and try again"
     # 其余情况截断长错误，避免整段堆栈吓到用户
     return text[:200]
 
@@ -105,13 +107,13 @@ async def user_create(
     require_csrf(request, csrf)
     name = username.strip()
     if not name or len(password) < 4:
-        _flash(request, "warning", "用户名不能为空，密码至少 4 位")
+        _flash(request, "warning", "Username cannot be empty and the password must be at least 4 characters")
         return RedirectResponse("/admin/users", status_code=303)
     if role not in ROLE_ALL:
-        _flash(request, "warning", "角色不合法")
+        _flash(request, "warning", "Invalid role")
         return RedirectResponse("/admin/users", status_code=303)
     if db.query(User).filter(User.username == name).one_or_none():
-        _flash(request, "warning", f"账号 {name} 已存在")
+        _flash(request, "warning", f"Account {name} already exists")
         return RedirectResponse("/admin/users", status_code=303)
 
     db.add(
@@ -124,8 +126,8 @@ async def user_create(
         )
     )
     db.commit()
-    audit(db, user, "user.create", f"创建账号 {name}（{role}）")
-    _flash(request, "success", f"账号 {name} 创建成功")
+    audit(db, user, "user.create", f"Created account {name} ({role})")
+    _flash(request, "success", f"Account {name} created")
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -162,7 +164,7 @@ async def user_toggle(
         target.is_active = not target.is_active
         db.commit()
         audit(db, current, "user.toggle",
-              f"{target.username} -> {'启用' if target.is_active else '停用'}")
+              f"{target.username} -> {'enabled' if target.is_active else 'disabled'}")
     return RedirectResponse("/admin/users", status_code=303)
 
 
@@ -180,14 +182,14 @@ async def user_password(
     if target and len(password) >= 4:
         target.password_hash = hash_password(password)
         db.commit()
-        audit(db, current, "user.password", f"重置 {target.username} 密码")
-        _flash(request, "success", f"已重置 {target.username} 的密码")
+        audit(db, current, "user.password", f"Reset password for {target.username}")
+        _flash(request, "success", f"Password for {target.username} has been reset")
     else:
-        _flash(request, "warning", "密码至少 4 位")
+        _flash(request, "warning", "Password must be at least 4 characters")
     return RedirectResponse("/admin/users", status_code=303)
 
 
-# ---- 数据导入 ----
+# ---- 数据导入（已并入发票列表页，此处仅保留处理入口） ----
 
 
 @router.get("/upload")
@@ -195,12 +197,8 @@ async def upload_page(
     request: Request,
     user: User = Depends(require_type1),
 ) -> object:
-    return templates.TemplateResponse(
-        request,
-        "admin_upload.html",
-        {"user": user, "results": None, "pending": None,
-         "flash": request.session.pop("flash", None)},
-    )
+    """旧「数据导入」页地址，跳转到发票列表（导入已是列表页内的功能）。"""
+    return RedirectResponse("/invoices", status_code=303)
 
 
 @router.post("/upload")
@@ -213,29 +211,43 @@ async def upload_files(
     user: User = Depends(require_type1),
     db: Session = Depends(get_db),
 ) -> object:
+    """数据导入处理，结果直接渲染在发票列表页（含重复确认 / 导入结果）。"""
     require_csrf(request, csrf)
 
-    # 第二段：用户在确认页点了「确认导入」
+    def render(results: list[dict], pending: list[dict], highlight_ids: list[int]) -> object:
+        return templates.TemplateResponse(
+            request,
+            "invoices.html",
+            invoice_list_context(
+                request, db, user,
+                pending=pending, results=results,
+                highlight_ids=highlight_ids,
+            ),
+        )
+
+    # 第二段：用户在确认表单里点了「确认导入」
     if confirm == "1":
         results = []
+        highlight_ids: list[int] = []
         for entry in json.loads(pending_json or "[]"):
             if not entry.get("overwrite"):
                 results.append({"file": entry["file"], "ok": False,
                                 "invoice_no": entry.get("invoice_no", "-"),
-                                "message": "已跳过（未勾选覆盖）"})
+                                "message": "Skipped (overwrite not checked)"})
                 continue
             path = Path(entry["path"])
             if not path.exists():
                 results.append({"file": entry["file"], "ok": False,
                                 "invoice_no": entry.get("invoice_no", "-"),
-                                "message": "源文件不存在，请重新上传"})
+                                "message": "Source file not found, please upload again"})
                 continue
             try:
                 invoice, created = import_source_file(db, path, user)
+                highlight_ids.append(invoice.id)
                 results.append(
                     {"file": entry["file"], "ok": True,
                      "invoice_no": invoice.invoice_no,
-                     "message": "新建" if created else "覆盖已有发票"}
+                     "message": "New" if created else "Overwrote existing invoice"}
                 )
                 audit(db, user, "import", f"{entry['file']} -> {invoice.invoice_no}")
             except Exception as exc:
@@ -244,29 +256,25 @@ async def upload_files(
                                 "invoice_no": entry.get("invoice_no", "-"),
                                 "message": _friendly_import_error(exc)})
         ok = sum(1 for r in results if r["ok"])
-        audit(db, user, "import.batch", f"确认导入 {len(results)} 个，成功 {ok} 个")
-        return templates.TemplateResponse(
-            request,
-            "admin_upload.html",
-            {"user": user, "results": results, "pending": None,
-             "flash": request.session.pop("flash", None)},
-        )
+        audit(db, user, "import.batch", f"Confirmed import of {len(results)} file(s), {ok} succeeded")
+        return render(results, [], highlight_ids)
 
-    # 第一段：解析 + 检测重复，不入库
+    # 第一段：解析 + 检测重复，无重复的直接入库
     results: list[dict] = []
     pending: list[dict] = []
+    highlight_ids = []
     for upload in files:
         if not upload.filename:
             continue
         raw = await upload.read()
         if not raw:
-            results.append({"file": upload.filename, "ok": False, "message": "空文件"})
+            results.append({"file": upload.filename, "ok": False, "message": "Empty file"})
             continue
         # 大小预检：超过 20MB 拒绝，防滥用
         if len(raw) > 20 * 1024 * 1024:
             results.append({
                 "file": upload.filename, "ok": False,
-                "message": "文件超过 20MB，请检查文件内容后重试",
+                "message": "File exceeds 20MB, please check the file content and try again",
             })
             continue
         # 扩展名预检：不合法直接提示，不落盘
@@ -274,7 +282,7 @@ async def upload_files(
         if suffix not in (".xlsm", ".xlsx"):
             results.append({
                 "file": upload.filename, "ok": False,
-                "message": f"格式不支持：{suffix or '（无扩展名）'}，仅接受 .xlsm / .xlsx Excel 文件",
+                "message": f"Unsupported format: {suffix or '(no extension)'}, only .xlsm / .xlsx Excel files are accepted",
             })
             continue
         try:
@@ -292,7 +300,7 @@ async def upload_files(
                 "file": upload.filename,
                 "path": str(path),
                 "invoice_no": scan["invoice_no"],
-                "uploaded_at": ex.get("uploaded_at").strftime("%Y-%m-%d %H:%M")
+                "uploaded_at": fmt_local(ex.get("uploaded_at"), "%Y-%m-%d %H:%M")
                 if ex.get("uploaded_at") else "-",
                 "uploaded_by": ex.get("uploaded_by") or "-",
                 "source_filename": ex.get("source_filename") or "-",
@@ -300,10 +308,11 @@ async def upload_files(
         else:
             try:
                 invoice, created = import_source_file(db, path, user)
+                highlight_ids.append(invoice.id)
                 results.append(
                     {"file": upload.filename, "ok": True,
                      "invoice_no": invoice.invoice_no,
-                     "message": "新建" if created else "替换已有发票"}
+                     "message": "New" if created else "Replaced existing invoice"}
                 )
                 audit(db, user, "import", f"{upload.filename} -> {invoice.invoice_no}")
             except Exception as exc:
@@ -313,13 +322,8 @@ async def upload_files(
 
     ok = sum(1 for r in results if r["ok"])
     if results:
-        audit(db, user, "import.batch", f"上传 {len(results)} 个，成功 {ok} 个")
-    return templates.TemplateResponse(
-        request,
-        "admin_upload.html",
-        {"user": user, "results": results, "pending": pending,
-         "flash": request.session.pop("flash", None)},
-    )
+        audit(db, user, "import.batch", f"Uploaded {len(results)} file(s), {ok} succeeded")
+    return render(results, pending, highlight_ids)
 
 
 # ---- 导出历史 ----
@@ -437,14 +441,14 @@ async def invoice_delete(
     if not target.startswith("/"):
         target = "/invoices"
     if invoice is None:
-        _flash(request, "warning", "发票不存在，可能已被删除")
+        _flash(request, "warning", "Invoice not found, it may have been deleted")
         return RedirectResponse(target, status_code=303)
     no = invoice.invoice_no or f"#{invoice.id}"
     source = invoice.source_filename or "-"
     db.delete(invoice)
     db.commit()
-    audit(db, current, "invoice.delete", f"删除发票 {no}（源文件保留: {source}）")
-    _flash(request, "success", f"已删除发票 {no}（源文件保留，未删除）")
+    audit(db, current, "invoice.delete", f"Deleted invoice {no} (source file kept: {source})")
+    _flash(request, "success", f"Invoice {no} deleted (source file kept, not deleted)")
     return RedirectResponse(target, status_code=303)
 
 
@@ -498,8 +502,8 @@ async def admin_stats(
         "invoices": db.query(Invoice).count(),
         "exports": db.query(ExportJob).filter(ExportJob.success.is_(True)).count(),
         "failed": db.query(ExportJob).filter(ExportJob.success.is_(False)).count(),
-        "companies": [{"name": c or "未识别", "cnt": n} for c, n in by_company],
-        "transports": [{"name": t or "未识别", "cnt": n} for t, n in by_transport],
+        "companies": [{"name": c or "Unrecognized", "cnt": n} for c, n in by_company],
+        "transports": [{"name": t or "Unrecognized", "cnt": n} for t, n in by_transport],
     }
     max_cnt = max((r["cnt"] for r in monthly), default=1)
     for r in monthly:

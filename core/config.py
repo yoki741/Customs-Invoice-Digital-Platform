@@ -34,7 +34,7 @@ TRANSPORT_TEMPLATES = {
 }
 
 # 装柜列表（Shipment List）模板与输出目录
-SHIPMENT_LIST_TEMPLATE = TEMPLATE_DIR / "装柜列表模板.xlsx"
+SHIPMENT_LIST_TEMPLATE = BASE_DIR / "Shipment List 列表模板简化 补充.xlsx"
 SHIPMENT_LIST_DIR = OUTPUT_DIR / "装柜列表"
 
 # 导出后是否用 Excel 开启“修订跟踪”（本地修改可回溯）。

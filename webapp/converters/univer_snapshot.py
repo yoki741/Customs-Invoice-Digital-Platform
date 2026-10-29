@@ -193,7 +193,7 @@ def workbook_to_snapshot(
     workbook: Workbook,
     *,
     workbook_id: str = "invoice-workbook",
-    workbook_name: str = "报关发票",
+    workbook_name: str = "Customs Invoice",
     highlight: Optional[dict[str, list[str]]] = None,
     locale: str = "zhCN",
 ) -> dict[str, Any]:

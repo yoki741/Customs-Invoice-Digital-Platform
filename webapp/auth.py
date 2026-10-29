@@ -27,9 +27,9 @@ from core.config import (
     SECRET_KEY_PATH,
     ensure_dirs,
 )
-from .models import ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2, User, get_db
+from .models import ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2, ROLE_TYPE3, User, get_db
 
-ROLE_ALL = (ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2)
+ROLE_ALL = (ROLE_ADMIN, ROLE_TYPE1, ROLE_TYPE2, ROLE_TYPE3)
 
 # Header 透传的用户名允许字符（防日志注入等）
 _HEADER_USER_RE = re.compile(r"^[\w.\-@一-鿿]{1,64}$")
@@ -46,7 +46,7 @@ class LoginRequired(Exception):
 class PermissionDenied(Exception):
     """已登录但无权访问。"""
 
-    def __init__(self, message: str = "无权访问") -> None:
+    def __init__(self, message: str = "Access denied") -> None:
         self.message = message
         super().__init__(message)
 
@@ -81,7 +81,7 @@ def require_csrf(request: Request, csrf: str = Form("")) -> None:
     """FastAPI 依赖：校验 POST 表单里的 csrf 字段。"""
     expected = request.session.get("csrf")
     if not expected or not csrf or not secrets.compare_digest(expected, csrf):
-        raise HTTPException(status_code=403, detail="CSRF token 无效，请刷新页面重试")
+        raise HTTPException(status_code=403, detail="Invalid CSRF token, please refresh the page and try again")
 
 
 # ---- 日志 ----
@@ -168,7 +168,7 @@ def _header_auth_user(request: Request, db: Session) -> Optional[User]:
         )
         db.add(user)
         db.commit()
-        audit(db, user, "jit.provision", f"Header 认证自动开通账号（角色 {role}）")
+        audit(db, user, "jit.provision", f"Account auto-provisioned via header auth (role {role})")
         logger.info("Header 认证 JIT 开通账号: {} ({})", username, role)
     if not user.is_active:
         logger.warning("Header 认证用户已被停用: {}", username)
@@ -216,7 +216,7 @@ def require_roles(*roles: str) -> Callable:
             raise LoginRequired(str(request.url.path))
         if user.role not in roles:
             raise PermissionDenied(
-                f"当前账号（{user.role}）无权访问该页面"
+                f"Your account ({user.role}) has no access to this page"
             )
         return user
 
@@ -226,6 +226,11 @@ def require_roles(*roles: str) -> Callable:
 require_admin = require_roles(ROLE_ADMIN)
 require_type1 = require_roles(ROLE_TYPE1, ROLE_ADMIN)
 require_type2 = require_roles(ROLE_TYPE2, ROLE_ADMIN)
+require_type3 = require_roles(ROLE_TYPE3, ROLE_ADMIN)
+# Shipment List 模块（页面 / 下载 / 编辑）：第一类与第三类可用
+require_type1_or_3 = require_roles(ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN)
+# 报关发票编辑页（含快照 / 导出 / 保存 / 重置接口）：第一类与第二类可用
+require_type1_or_2 = require_roles(ROLE_TYPE1, ROLE_TYPE2, ROLE_ADMIN)
 require_any = require_roles(*ROLE_ALL)
 
 

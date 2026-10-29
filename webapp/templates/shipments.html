@@ -1,7 +1,39 @@
 {% extends "base.html" %}
-{% block title %}装柜列表 - 报关发票(柬埔寨)数字管理平台{% endblock %}
-{% block heading %}装柜列表{% endblock %}
-{% block crumb %}共 {{ total }} 行{% endblock %}
+{% block title %}Shipment List - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Shipment List{% endblock %}
+{% block crumb %}{{ total }} rows{% endblock %}
+
+{% block head %}
+<style>
+  @keyframes row-flash {
+    0% { background-color: #ffe08a; }
+    70% { background-color: #fff3bf; }
+    100% { background-color: transparent; }
+  }
+  tr.row-flash > td { animation: row-flash 1s ease-out forwards; }
+  .shipments-table { font-size: .78rem; white-space: nowrap; }
+  .shipments-table td.small { white-space: normal; min-width: 90px; }
+  .shipments-table td[data-field] { min-width: 64px; }
+  .shipments-table td[data-field] input,
+  .shipments-table td[data-field] select {
+    font-size: .72rem; padding: 0 .25rem; height: 25px; min-width: 64px; width: 100%;
+  }
+  /* 报关发票列冻结在最左（Excel 冻结窗格效果）；表头吸顶由全局 .table-responsive 样式负责 */
+  .shipments-table .sticky-col {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: inset -1px 0 0 var(--border);
+  }
+  .shipments-table thead .sticky-col {
+    z-index: 3;
+    background: #fafbfc;
+    box-shadow: inset -1px 0 0 var(--border), inset 0 -1px 0 var(--border);
+  }
+  .shipments-table tbody tr:hover > .sticky-col { background: #f8f9fc; }
+</style>
+{% endblock %}
 
 {% block content %}
 
@@ -9,48 +41,53 @@
   <div class="card-body py-2">
     <form class="row g-2 align-items-end" method="get" action="/shipments">
       <div class="col-6 col-md-2">
-        <label class="form-label">月份</label>
+        <label class="form-label">Month</label>
         <select class="form-select form-select-sm" name="month">
-          <option value="">全部</option>
+          <option value="">All</option>
           {% for m in months %}
           <option value="{{ m }}" {% if month == m %}selected{% endif %}>{{ m }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-6 col-md-2">
-        <label class="form-label">公司</label>
+        <label class="form-label">Company</label>
         <select class="form-select form-select-sm" name="company">
-          <option value="">全部</option>
+          <option value="">All</option>
           {% for c in ['Vanco', 'Eastex'] %}
           <option value="{{ c }}" {% if company == c %}selected{% endif %}>{{ c }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-6 col-md-2">
-        <label class="form-label">运输方式</label>
+        <label class="form-label">Mode</label>
         <select class="form-select form-select-sm" name="mode">
-          <option value="">全部</option>
+          <option value="">All</option>
           {% for m in ['AIR', 'SEA', 'TRUCK'] %}
           <option value="{{ m }}" {% if mode == m %}selected{% endif %}>{{ m }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-12 col-md-3">
-        <label class="form-label">搜索</label>
+        <label class="form-label">Search</label>
         <input class="form-control form-control-sm" name="q" value="{{ q }}"
-               placeholder="Custom # / 提单号 / Fty Inv / 供应商 / 品名">
+               placeholder="Custom # / Blading / Fty Inv / Shipper / Description">
       </div>
       <div class="col-auto">
-        <button class="btn btn-primary btn-sm">筛选</button>
-        <a class="btn btn-outline-secondary btn-sm" href="/shipments">重置</a>
+        <button class="btn btn-primary btn-sm">Filter</button>
+        <a class="btn btn-outline-secondary btn-sm" href="/shipments">Reset</a>
       </div>
-      <div class="col-auto ms-auto">
+      <div class="col-auto ms-auto d-flex gap-2">
+        {% if user.role != ROLE_TYPE2 %}
+        <button type="button" class="btn btn-outline-primary btn-sm"
+                onclick="downloadSelected()" title="Download checked customs invoice .xlsm files as one zip">
+          Download Selected</button>
         {% if download_url %}
         <a class="btn btn-success btn-sm" href="{{ download_url }}"
-           title="下载 {{ current_month }} 装柜列表 Excel">
-          下载 {{ current_month }} Excel</a>
+           title="Download {{ current_month }} Shipment List Excel">
+          Download {{ current_month }} Excel</a>
         {% else %}
-        <button class="btn btn-outline-secondary btn-sm" disabled>暂无可下载文件</button>
+        <button class="btn btn-outline-secondary btn-sm" disabled>No file to download</button>
+        {% endif %}
         {% endif %}
       </div>
     </form>
@@ -63,69 +100,115 @@
       <table class="table table-sm table-hover mb-0 shipments-table">
         <thead>
           <tr>
+            <th class="sticky-col">Customs Invoice</th>
+            <th style="width:22px">{% if user.role != ROLE_TYPE2 %}<input type="checkbox" class="form-check-input"
+                                          onclick="toggleAllFiles(this)" title="Check all">{% endif %}</th>
             <th>Date</th>
-            <th>Mode</th>
-            <th>Custom #</th>
-            <th>Blading</th>
             <th>Fty Inv</th>
             <th>Shipper</th>
             <th>EST/VCO</th>
-            <th>柜号</th>
+            <th>Custom #</th>
             <th class="num">Package</th>
+            <th>Blading</th>
+            <th>Container 1</th>
+            <th>Container 2</th>
+            <th>Container 3</th>
+            <th>Container 4 or other</th>
             <th class="num">NW KG</th>
             <th class="num">GW KG</th>
             <th>DESCRIPTION</th>
-            <th>POL</th>
+            <th>Mode</th>
             <th>ETD</th>
             <th>ETA</th>
+            <th>POL</th>
             <th>VESSEL</th>
             <th>Carrier</th>
-            <th>柜型</th>
+            <th>Container Type</th>
             <th class="num">CBM</th>
-            <th>更新时间</th>
+            <th>机器柜</th>
+            <th>辅料柜</th>
+            <th>ID</th>
+            <th>Updated</th>
+            <th class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-          <tr>
-            <td class="text-nowrap">{{ r.date or '-' }}</td>
+          <tr data-entry-id="{{ r.id }}">
+            <td class="small text-nowrap sticky-col">
+              {% if r.file_exists %}
+                {% if user.role == ROLE_TYPE2 and r.edit_ids %}
+                <a href="/invoices/edit?ids={{ r.edit_ids }}"
+                   title="Edit customs invoice (opens the first-generation edit page)">{{ r.file_name }}</a>
+                {% else %}
+                <a href="#" data-folder="{{ r.file_folder }}" data-name="{{ r.file_name }}"
+                   onclick="previewFromLink(this);return false"
+                  title="Preview {{ r.file_name }}">{{ r.file_name }}</a>
+                {% endif %}
+                {% if user.role == ROLE_ADMIN and r.edit_ids %}
+                <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.edit_ids }}"
+                   title="Edit customs invoice (opens the first-generation edit page)">Edit Invoice</a>
+                {% endif %}
+                <button class="btn btn-sm btn-outline-info py-0" data-folder="{{ r.file_folder }}"
+                        data-name="{{ r.file_name }}" onclick="historyFromBtn(this)"
+                        title="Modification history">Log</button>
+              {% else %}
+                <span class="text-muted" title="File missing">{{ r.file_name or '-' }}</span>
+              {% endif %}
+            </td>
             <td>
+              {% if r.file_exists and user.role != ROLE_TYPE2 %}
+              <input type="checkbox" class="form-check-input file-check" value="{{ r.id }}">
+              {% endif %}
+            </td>
+            <td class="text-nowrap" data-field="date" data-value="{{ r.date or '' }}">{{ r.date or '-' }}</td>
+            <td class="small" data-field="fty_inv" data-value="{{ r.fty_inv or '' }}">{{ r.fty_inv or '-' }}</td>
+            <td data-field="shipper" data-value="{{ r.shipper or '' }}">{{ r.shipper or '-' }}</td>
+            <td data-field="est_vco" data-value="{{ r.est_vco or '' }}">{{ r.est_vco or '-' }}</td>
+            <td class="small text-nowrap fw-semibold" data-field="custom_no" data-value="{{ r.custom_no or '' }}">{{ r.custom_no or '-' }}</td>
+            <td class="num" data-field="package" data-value="{{ r.package if r.package is not none else '' }}">{{ r.package if r.package is not none else '-' }}</td>
+            <td class="small text-nowrap" data-field="blading" data-value="{{ r.blading or '' }}">{{ r.blading or '-' }}</td>
+            <td class="small text-nowrap" data-field="container_1" data-value="{{ r.container_1 or '' }}">{{ r.container_1 or '-' }}</td>
+            <td class="small text-nowrap" data-field="container_2" data-value="{{ r.container_2 or '' }}">{{ r.container_2 or '-' }}</td>
+            <td class="small text-nowrap" data-field="container_3" data-value="{{ r.container_3 or '' }}">{{ r.container_3 or '-' }}</td>
+            <td class="small text-nowrap" data-field="container_4" data-value="{{ r.container_4 or '' }}">{{ r.container_4 or '-' }}</td>
+            <td class="num" data-field="nw_kg" data-value="{{ r.nw_kg or 0 }}">{{ '%.3f'|format(r.nw_kg or 0) }}</td>
+            <td class="num" data-field="gw_kg" data-value="{{ r.gw_kg or 0 }}">{{ '%.3f'|format(r.gw_kg or 0) }}</td>
+            <td class="small" data-field="description" data-value="{{ r.description or '' }}">{{ r.description or '-' }}</td>
+            <td data-field="mode" data-value="{{ r.mode or '' }}">
               {% if r.mode == 'AIR' %}<span class="badge bg-info text-dark">AIR</span>
               {% elif r.mode == 'SEA' %}<span class="badge bg-primary">SEA</span>
               {% elif r.mode == 'TRUCK' %}<span class="badge bg-secondary">TRUCK</span>
               {% else %}{{ r.mode or '-' }}{% endif %}
             </td>
-            <td class="small text-nowrap fw-semibold">{{ r.custom_no or '-' }}</td>
-            <td class="small text-nowrap">{{ r.blading or '-' }}</td>
-            <td class="small">{{ r.fty_inv or '-' }}</td>
-            <td>{{ r.shipper or '-' }}</td>
-            <td>{{ r.est_vco or '-' }}</td>
-            <td class="small text-nowrap">
-              {% for c in [r.container_1, r.container_2, r.container_3, r.container_4] if c %}
-                {{ c }}{% if not loop.last %}<br>{% endif %}
-              {% else %}
-                -
-              {% endfor %}
+            <td class="text-nowrap" data-field="etd" data-value="{{ r.etd or '' }}">{{ r.etd or '-' }}</td>
+            <td class="text-nowrap" data-field="eta" data-value="{{ r.eta or '' }}">{{ r.eta or '-' }}</td>
+            <td class="small" data-field="pol" data-value="{{ r.pol or '' }}">{{ r.pol or '-' }}</td>
+            <td class="small" data-field="vessel" data-value="{{ r.vessel or '' }}">{{ r.vessel or '-' }}</td>
+            <td class="small" data-field="carrier" data-value="{{ r.carrier or '' }}">{{ r.carrier or '-' }}</td>
+            <td class="small" data-field="container_type" data-value="{{ r.container_type or '' }}">{{ r.container_type or '-' }}</td>
+            <td class="num" data-field="cbm" data-value="{{ r.cbm if r.cbm is not none else '' }}">{{ '%.3f'|format(r.cbm) if r.cbm is not none else '-' }}</td>
+            <td class="small text-nowrap" data-field="machine_cabinet" data-value="{{ r.machine_cabinet or '' }}">{{ r.machine_cabinet or '-' }}</td>
+            <td class="small text-nowrap" data-field="aux_cabinet" data-value="{{ r.aux_cabinet or '' }}">{{ r.aux_cabinet or '-' }}</td>
+            <td class="small text-nowrap fw-semibold"{% if user.role in [ROLE_TYPE3, ROLE_ADMIN] %} data-field="ref_id" data-value="{{ r.ref_id or '' }}"{% endif %}>{{ r.ref_id or '-' }}</td>
+            <td class="small text-muted text-nowrap cell-updated">
+              {{ r.updated_at|localtime('%Y-%m-%d %H:%M') if r.updated_at else '-' }}
             </td>
-            <td class="num">{{ r.package if r.package is not none else '-' }}</td>
-            <td class="num">{{ '%.3f'|format(r.nw_kg or 0) }}</td>
-            <td class="num">{{ '%.3f'|format(r.gw_kg or 0) }}</td>
-            <td class="small">{{ r.description or '-' }}</td>
-            <td class="small">{{ r.pol or '-' }}</td>
-            <td class="text-nowrap">{{ r.etd or '-' }}</td>
-            <td class="text-nowrap">{{ r.eta or '-' }}</td>
-            <td class="small">{{ r.vessel or '-' }}</td>
-            <td class="small">{{ r.carrier or '-' }}</td>
-            <td class="small">{{ r.container_type or '-' }}</td>
-            <td class="num">{{ '%.3f'|format(r.cbm) if r.cbm is not none else '-' }}</td>
-            <td class="small text-muted text-nowrap">
-              {{ r.updated_at.strftime('%Y-%m-%d %H:%M') if r.updated_at else '-' }}
+            <td class="text-end text-nowrap">
+              {% if user.role != ROLE_TYPE2 %}
+              <button class="btn btn-sm btn-outline-primary py-0 btn-edit" onclick="editRow(this)">Edit</button>
+              <span class="edit-actions d-none">
+                <button class="btn btn-sm btn-success py-0" onclick="saveRow(this)" title="Save">✓</button>
+                <button class="btn btn-sm btn-outline-secondary py-0" onclick="cancelEdit(this)" title="Cancel">✗</button>
+              </span>
+              {% endif %}
             </td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="20" class="text-center text-muted py-4">
-              暂无装柜列表。在发票列表选择发票，点击“合并编辑 / 导出”生成 .xlsm 后会自动汇总到这里。
+            <td colspan="29" class="text-center text-muted py-4">
+              No shipment list yet. Select invoices in the invoice list, click
+              &ldquo;Merge Edit / Export&rdquo; to generate .xlsm, and rows will show up here automatically.
             </td>
           </tr>
           {% endfor %}
@@ -135,23 +218,335 @@
   </div>
   {% if pages > 1 %}
   <div class="card-footer d-flex justify-content-between">
-    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <span class="text-muted small">Page {{ page }} / {{ pages }}</span>
     <div>
       {% if page > 1 %}
       <a class="btn btn-sm btn-outline-secondary"
-         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page - 1 }}">上一页</a>
+         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page - 1 }}">Previous</a>
       {% endif %}
       {% if page < pages %}
       <a class="btn btn-sm btn-outline-secondary"
-         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page + 1 }}">下一页</a>
+         href="/shipments?month={{ month }}&company={{ company }}&mode={{ mode }}&q={{ q }}&page={{ page + 1 }}">Next</a>
       {% endif %}
     </div>
   </div>
   {% endif %}
 </div>
 
-<style>
-  .shipments-table { font-size: .78rem; white-space: nowrap; }
-  .shipments-table td.small { white-space: normal; min-width: 90px; }
-</style>
+<div class="modal fade" id="preview-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <span class="fw-semibold small" id="preview-title">-</span>
+        <div class="btn-group btn-group-sm ms-3" id="preview-sheets"></div>
+        <button type="button" class="btn-close ms-auto" onclick="closePreview()"></button>
+      </div>
+      <div class="modal-body p-1" style="height:78vh">
+        <div id="preview-grid" style="width:100%;height:100%"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="history-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <span class="fw-semibold small" id="history-title">History</span>
+        <button type="button" class="btn-close ms-auto" onclick="closeHistory()"></button>
+      </div>
+      <div class="modal-body" style="max-height:70vh;overflow-y:auto" id="history-body">
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ---- 预览 / 修改记录弹窗（自报关发票页迁入） ----
+let previewModal = null;
+let historyModal = null;
+let univerLoading = null;
+
+function ensureUniver() {
+  if (window.InvoiceGrid) return Promise.resolve();
+  if (univerLoading) return univerLoading;
+  univerLoading = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = '/static/vendor/univer.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = '/static/vendor/univer.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Failed to load preview component'));
+    document.head.appendChild(s);
+  });
+  return univerLoading;
+}
+
+function previewFromLink(el) {
+  previewFile(el.dataset.folder, el.dataset.name);
+}
+
+function historyFromBtn(el) {
+  showHistory(el.dataset.folder, el.dataset.name);
+}
+
+async function previewFile(folder, name) {
+  const title = document.getElementById('preview-title');
+  title.textContent = 'Loading...';
+  let res;
+  try {
+    res = await fetch('/api/files/preview?folder=' + encodeURIComponent(folder) +
+                      '&name=' + encodeURIComponent(name));
+  } catch (err) {
+    alert('Preview request failed: ' + err);
+    return;
+  }
+  const data = await res.json();
+  if (!data.ok) { alert(data.error || 'Preview failed'); return; }
+
+  try {
+    await ensureUniver();
+  } catch (err) {
+    alert(err.message || 'Preview component failed to load');
+    return;
+  }
+
+  const lock = {};
+  Object.values(data.snapshot.sheets || {}).forEach(s => { lock[s.name] = []; });
+  InvoiceGrid.load('preview-grid', data.snapshot, lock, null);
+
+  const box = document.getElementById('preview-sheets');
+  box.innerHTML = '';
+  Object.values(data.snapshot.sheets || {}).forEach(s => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline-secondary';
+    btn.textContent = s.name;
+    btn.onclick = () => InvoiceGrid.showSheet(s.name);
+    box.appendChild(btn);
+  });
+
+  title.textContent = name;
+  if (!previewModal) {
+    previewModal = new bootstrap.Modal(document.getElementById('preview-modal'));
+  }
+  previewModal.show();
+}
+
+function closePreview() {
+  if (previewModal) previewModal.hide();
+}
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function multiline(v) {
+  return esc(v).replace(/\n/g, '<br>');
+}
+
+async function showHistory(folder, name) {
+  const body = document.getElementById('history-body');
+  document.getElementById('history-title').textContent = 'History: ' + folder + '/' + name;
+  body.innerHTML = '<div class="text-muted small py-4 text-center">Loading...</div>';
+  if (!historyModal) {
+    historyModal = new bootstrap.Modal(document.getElementById('history-modal'));
+  }
+  historyModal.show();
+  let res;
+  try {
+    res = await fetch('/api/files/history?folder=' + encodeURIComponent(folder) +
+                      '&name=' + encodeURIComponent(name));
+  } catch (err) {
+    body.innerHTML = '<div class="text-danger small">Failed to load: ' + err + '</div>';
+    return;
+  }
+  const data = await res.json();
+  if (!data.ok) {
+    body.innerHTML = '<div class="text-danger small">' + (data.error || 'Failed to load') + '</div>';
+    return;
+  }
+  if (!data.rows.length) {
+    body.innerHTML = '<div class="text-muted small py-4 text-center">No history yet</div>';
+    return;
+  }
+  let html = '<ul class="list-group list-group-flush small">';
+  data.rows.forEach(r => {
+    const badge = r.kind === 'export'
+      ? '<span class="badge text-bg-primary">Generated</span>'
+      : '<span class="badge text-bg-secondary">Saved</span>';
+    let extra = '';
+    if (r.kind === 'export' && r.version) extra += ' · gen #' + r.version;
+    if (r.sha) extra += ' | SHA256: ' + esc(r.sha);
+    if (r.backup) {
+      extra += ' | <a href="' + r.backup + '">Download previous version</a>';
+    }
+    let changesHtml = '';
+    if (r.changes && r.changes.length) {
+      changesHtml = '<div class="mt-1">' + r.changes.map(c => {
+        const oldText = c.old
+          ? '<span class="text-muted text-decoration-line-through">' + multiline(c.old) + '</span> → '
+          : '';
+        const newText = c.new ? multiline(c.new) : '<span class="text-muted">(empty)</span>';
+        return '<div><span class="text-muted">' + esc(c.label) + ':</span> ' +
+               oldText + '<b>' + newText + '</b></div>';
+      }).join('') + '</div>';
+    } else {
+      changesHtml = '<div class="text-muted mt-1">No field changes</div>';
+    }
+    let formHtml = '';
+    if (r.form) {
+      formHtml = '<details class="mt-1"><summary class="text-muted">All fields</summary>' +
+                 '<div class="text-muted">' + multiline(r.form) + '</div></details>';
+    }
+    html += '<li class="list-group-item py-2">' +
+      '<div>' + badge + ' <b>' + esc(r.by) + '</b> · ' + esc(r.time) + extra + '</div>' +
+      changesHtml + formHtml + '</li>';
+  });
+  html += '</ul>';
+  body.innerHTML = html;
+}
+
+function closeHistory() {
+  if (historyModal) historyModal.hide();
+}
+
+// ---- 批量下载报关发票 ----
+function toggleAllFiles(box) {
+  document.querySelectorAll('.file-check').forEach(c => { c.checked = box.checked; });
+}
+
+function downloadSelected() {
+  const boxes = [...document.querySelectorAll('.file-check:checked')];
+  if (!boxes.length) {
+    alert('Please check at least one row with a customs invoice file first');
+    return;
+  }
+  window.location.href = '/api/shipments/download-files?ids=' +
+    boxes.map(b => b.value).join(',');
+}
+
+// ---- 行内编辑 ----
+function modeBadge(value) {
+  if (value === 'AIR') return '<span class="badge bg-info text-dark">AIR</span>';
+  if (value === 'SEA') return '<span class="badge bg-primary">SEA</span>';
+  if (value === 'TRUCK') return '<span class="badge bg-secondary">TRUCK</span>';
+  return esc(value) || '-';
+}
+
+function displayValue(field, value) {
+  if (field === 'mode') return modeBadge(value);
+  if (!value) return '-';
+  if (field === 'nw_kg' || field === 'gw_kg' || field === 'cbm') {
+    const n = parseFloat(value);
+    return isNaN(n) ? esc(value) : n.toFixed(3);
+  }
+  return esc(value);
+}
+
+function editRow(btn) {
+  const tr = btn.closest('tr');
+  if (tr.dataset.editing === '1') return;
+  tr.dataset.editing = '1';
+  tr.querySelectorAll('td[data-field]').forEach(td => {
+    const field = td.dataset.field;
+    const value = td.dataset.value || '';
+    td.dataset.html = td.innerHTML;
+    let el;
+    if (field === 'date' || field === 'etd' || field === 'eta') {
+      el = document.createElement('input');
+      el.type = 'date';
+      el.value = value;
+      el.className = 'form-control form-control-sm';
+    } else if (field === 'mode') {
+      el = document.createElement('select');
+      el.className = 'form-select form-select-sm';
+      ['AIR', 'SEA', 'TRUCK'].forEach(opt => {
+        const o = document.createElement('option');
+        o.value = o.textContent = opt;
+        if (opt === value) o.selected = true;
+        el.appendChild(o);
+      });
+      if (value && !['AIR', 'SEA', 'TRUCK'].includes(value)) {
+        const o = document.createElement('option');
+        o.value = o.textContent = value;
+        o.selected = true;
+        el.appendChild(o);
+      }
+    } else {
+      el = document.createElement('input');
+      el.type = 'text';
+      el.value = value;
+      el.className = 'form-control form-control-sm';
+    }
+    el.dataset.field = field;
+    td.innerHTML = '';
+    td.appendChild(el);
+  });
+  tr.querySelector('.btn-edit').classList.add('d-none');
+  tr.querySelector('.edit-actions').classList.remove('d-none');
+}
+
+function exitEdit(tr) {
+  tr.querySelectorAll('td[data-field]').forEach(td => {
+    if (td.dataset.html !== undefined) {
+      td.innerHTML = td.dataset.html;
+      delete td.dataset.html;
+    }
+  });
+  tr.querySelector('.btn-edit').classList.remove('d-none');
+  tr.querySelector('.edit-actions').classList.add('d-none');
+  delete tr.dataset.editing;
+}
+
+function cancelEdit(btn) {
+  exitEdit(btn.closest('tr'));
+}
+
+async function saveRow(btn) {
+  const tr = btn.closest('tr');
+  const id = tr.dataset.entryId;
+  const params = new URLSearchParams();
+  tr.querySelectorAll('td[data-field] input, td[data-field] select').forEach(el => {
+    params.append(el.dataset.field, el.value);
+  });
+  btn.disabled = true;
+  let data;
+  try {
+    const res = await fetch('/api/shipments/' + id + '/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    data = await res.json();
+  } catch (err) {
+    alert('Save request failed: ' + err);
+    btn.disabled = false;
+    return;
+  }
+  btn.disabled = false;
+  if (!data.ok) { alert(data.error || 'Save failed'); return; }
+
+  tr.querySelectorAll('td[data-field]').forEach(td => {
+    const el = td.querySelector('input, select');
+    const value = el ? el.value : '';
+    td.dataset.value = value;
+    td.innerHTML = displayValue(td.dataset.field, value);
+    delete td.dataset.html;
+  });
+  const updated = tr.querySelector('.cell-updated');
+  if (updated && data.updated_at) updated.textContent = data.updated_at;
+  tr.querySelector('.btn-edit').classList.remove('d-none');
+  tr.querySelector('.edit-actions').classList.add('d-none');
+  delete tr.dataset.editing;
+  tr.classList.remove('row-flash');
+  void tr.offsetWidth;
+  tr.classList.add('row-flash');
+}
+</script>
 {% endblock %}

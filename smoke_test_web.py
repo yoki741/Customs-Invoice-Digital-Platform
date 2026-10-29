@@ -40,7 +40,7 @@ def main() -> None:
     assert r.status_code == 303, (r.status_code, r.text[:200])
     print("[OK] 登录 ->", r.headers["location"])
 
-    r = client.get("/admin/upload")
+    r = client.get("/invoices")
     assert r.status_code == 200, r.status_code
     csrf = _csrf_from(r.text)
 
@@ -53,7 +53,7 @@ def main() -> None:
     assert r.status_code == 200, (r.status_code, r.text[:500])
 
     # 已存在同号发票时走两段式确认：勾选覆盖后提交
-    if "覆盖" in r.text or "确认" in r.text:
+    if "Confirm Import" in r.text or "Duplicate Invoice No." in r.text:
         csrf = _csrf_from(r.text)
         r = client.post(
             "/admin/upload",
@@ -65,7 +65,7 @@ def main() -> None:
         )
         assert r.status_code == 200, (r.status_code, r.text[:500])
 
-    assert "成功" in r.text, r.text[:500]
+    assert "Import Results" in r.text, r.text[:500]
     print("[OK] 上传导入")
 
     r = client.get("/invoices")
@@ -106,6 +106,15 @@ def main() -> None:
     assert r.status_code == 200, r.status_code
     print("[OK] 下载:", len(r.content), "bytes")
 
+    # --- Shipment List（报关发票已并入） ---
+    r = client.get("/shipments")
+    assert r.status_code == 200, r.status_code
+    assert exported["filename"] in r.text, "装柜列表含报关发票文件名列"
+    assert "Download Selected" in r.text and "Log" in r.text
+    r = client.get("/files")
+    assert r.status_code == 303 and r.headers["location"] == "/shipments", r.status_code
+    print("[OK] Shipment List 含报关发票列 + /files 跳转")
+
     r = client.get("/details")
     assert r.status_code == 200, r.status_code
     print("[OK] 明细页")
@@ -121,39 +130,39 @@ def main() -> None:
     # --- 审计日志 ---
     r = client.get("/admin/audit")
     assert r.status_code == 200, r.status_code
-    assert "操作日志" in r.text
+    assert "Audit Log" in r.text
     r = client.get("/admin/audit", params={"action": "export"})
     assert r.status_code == 200 and "export" in r.text
     print("[OK] 审计日志 + 按操作筛选")
 
     # --- 自助改密码 ---
     r = client.get("/change-password")
-    assert r.status_code == 200 and "修改我的密码" in r.text
+    assert r.status_code == 200 and "Change Password" in r.text
     csrf = _csrf_from(r.text)
     r = client.post("/change-password", data={
         "csrf": csrf, "old_password": "wrong", "new_password": "newpass123",
         "confirm_password": "newpass123"}, follow_redirects=False)
     assert r.status_code == 303, r.status_code
     r = client.get("/change-password")
-    assert "原密码错误" in r.text
+    assert "Current password is incorrect" in r.text
     r = client.post("/change-password", data={
         "csrf": _csrf_from(r.text), "old_password": "admin123",
         "new_password": "admin123", "confirm_password": "admin123"},
         follow_redirects=False)
     r = client.get("/change-password")
-    assert "不能与原密码相同" in r.text
+    assert "cannot be the same" in r.text
     r = client.post("/change-password", data={
         "csrf": _csrf_from(r.text), "old_password": "admin123",
         "new_password": "admin456", "confirm_password": "admin456"},
         follow_redirects=False)
     assert r.status_code == 303
     r = client.get("/change-password")
-    assert "密码已修改" in r.text
+    assert "Password changed" in r.text
     print("[OK] 自助改密码（错误/相同/成功）")
 
     # 审计里应有改密码记录
     r = client.get("/admin/audit", params={"action": "password.change"})
-    assert r.status_code == 200 and "修改了自己的密码" in r.text
+    assert r.status_code == 200 and "changed their own password" in r.text
     print("[OK] 改密码已记入审计日志")
 
     # 改回原密码
@@ -165,7 +174,7 @@ def main() -> None:
 
     # --- 日期范围筛选 ---
     r = client.get("/invoices", params={"date_from": "2099-01-01"})
-    assert r.status_code == 200 and "暂无数据" in r.text, r.text[:300]
+    assert r.status_code == 200 and "No data" in r.text, r.text[:300]
     r = client.get("/invoices", params={"date_from": "2000-01-01",
                                         "date_to": "2099-12-31"})
     assert "D202609007" in r.text

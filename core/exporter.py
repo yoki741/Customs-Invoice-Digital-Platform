@@ -447,7 +447,7 @@ class Exporter:
             result.transport = transport
             result.bill_no = bill_no
             result.file_stem = file_stem
-            result.messages.append(f"模板文件不存在: {template_file.name}")
+            result.messages.append(f"Template file not found: {template_file.name}")
             return result
 
         wb_out = openpyxl.load_workbook(str(template_file))
@@ -525,7 +525,7 @@ class Exporter:
 
         if not all_po:
             result.ok = False
-            result.messages.append("无面料数据")
+            result.messages.append("No fabric data")
             wb_out.close()
             return result
 
@@ -607,8 +607,9 @@ class Exporter:
             if ft_price == 0.0 and override is None:
                 ws_inv1[f"I{cur_row}"].fill = price_missing_fill
                 result.messages.append(
-                    f"面料 {ft.upper()} 未在单价表中找到单价，"
-                    f"请在 INV1 表 I{cur_row} 单元格（橙色底纹）手动填写单价"
+                    f"Fabric {ft.upper()} has no unit price in the price table; "
+                    f"please fill in the unit price manually in cell I{cur_row} "
+                    f"of sheet INV1 (orange-shaded cell)"
                 )
             else:
                 ws_inv1[f"I{cur_row}"].fill = price_fill
@@ -641,7 +642,7 @@ class Exporter:
                 pass
         ws_inv1[f"A{ref_row}"] = f"REF:{ref_value}"
 
-        # 集装箱区域：清空 A/B 列，写入人工输入（最多 3 行）
+        # 集装箱区域：清空 A/B 列，写入人工输入（每行一格，对应 Container 1-4）
         if container_row:
             for r in range(container_row + 1, container_row + 10):
                 for col in ["A", "B"]:
@@ -649,10 +650,10 @@ class Exporter:
                     if not isinstance(cell, MergedCell):
                         cell.value = None
             if fields.container_info:
-                for i, line in enumerate(fields.container_info.split("\n")[:3]):
+                for i, line in enumerate(fields.container_info.split("\n")[:4]):
                     ws_inv1[f"A{container_row + 1 + i}"] = line
 
-        # 复制源 InputTable（保留格式），与 EXE 输出结构一致
+        # 复制源 InputTable（保留格式），命名 InputTable-源数据发票号
         if "InputTable" in wb_out.sheetnames:
             del wb_out["InputTable"]
         for i, data in enumerate(group_data):
@@ -661,11 +662,11 @@ class Exporter:
                 with warnings_shield():
                     src_wb = openpyxl.load_workbook(str(data.file_path), data_only=True)
             except Exception as exc:
-                result.messages.append(f"读取源文件失败 {data.file_name}: {exc}")
+                result.messages.append(f"Failed to read source file {data.file_name}: {exc}")
                 continue
             try:
                 if "InputTable" in src_wb.sheetnames:
-                    target = "InputTable" if i == 0 else f"InputTable_{inv_no}"
+                    target = f"InputTable-{inv_no}"
                     copy_sheet_with_format(src_wb, "InputTable", wb_out, target)
             finally:
                 src_wb.close()
@@ -716,7 +717,7 @@ class Exporter:
 
         result.total_amount = round(total_amount, 2)
         result.messages.append(
-            f"提单号 {ref_value} | 报关重量 {customs_weight}KG | 金额 ${total_amount:,.2f}"
+            f"Bill of Lading No. {ref_value} | Customs Weight {customs_weight}KG | Amount ${total_amount:,.2f}"
         )
         return result
 

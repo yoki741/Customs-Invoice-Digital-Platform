@@ -118,15 +118,18 @@ def main() -> None:
     wb.close()
     print("[OK] 追踪表状态为 veryHidden（Excel 界面不可见/不可操作）")
 
-    # ---- 3. 报关发票页：唯一文件 + 修改记录 ----
-    r = client.get("/files")
-    assert r.status_code == 200 and "报关发票" in r.text
+    # ---- 3. 报关发票并入 Shipment List：文件名列 + 修改记录入口 ----
+    r = client.get("/files", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/shipments", r.status_code
+    r = client.get("/shipments")
+    assert r.status_code == 200 and "Customs Invoice" in r.text
     assert d2["filename"] in r.text, "页面列出唯一文件"
-    assert "_v" not in r.text.split("<tbody")[1].split("</tbody>")[0], "页面无 _vN 文件名"
-    assert "修改记录" in r.text and "生成次数" in r.text
-    r = client.get("/files", params={"q": "VANCO INV#2609007"})
-    assert r.status_code == 200
-    print("[OK] 报关发票页：唯一文件、无 _vN、有修改记录入口")
+    import re as _re
+
+    tbody = r.text.split("<tbody")[1].split("</tbody>")[0]
+    assert not _re.search(r"_v\d", tbody), "页面无 _vN 文件名"
+    assert "Log" in r.text and "Download Selected" in r.text
+    print("[OK] Shipment List 页：报关发票列、无 _vN、有修改记录/批量下载入口")
 
     # ---- 4. 修改记录时间线（含编辑保存）----
     client.post(

@@ -167,7 +167,7 @@ def read_source_file(file_path: str | Path) -> SourceData:
 
     try:
         if "InputTable" not in wb.sheetnames:
-            raise KeyError(f"{path.name} 缺少 InputTable 工作表")
+            raise KeyError(f"{path.name} is missing the InputTable worksheet")
 
         ws = wb["InputTable"]
         data = SourceData(file_path=path)

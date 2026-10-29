@@ -12,7 +12,7 @@ SAMPLE = ROOT / "柬埔寨清关例子" / "VCO_202609_FB675_D202609007.xlsm"
 
 
 def get_csrf(client: httpx.Client) -> str:
-    r = client.get("/admin/upload")
+    r = client.get("/invoices")
     m = re.search(r'name="csrf"\s+value="([^"]+)"', r.text)
     return m.group(1)
 
@@ -29,7 +29,7 @@ def main() -> None:
         r = client.post("/admin/upload", data={"csrf": csrf},
                         files=[("files", (SAMPLE.name, fh, "application/octet-stream"))])
     body = r.text
-    assert "发现重复 Invoice No." in body, body[:800]
+    assert "Duplicate Invoice No." in body, body[:800]
     assert "overwrite-check" in body
     assert SAMPLE.name in body
     print("[OK] 重复检测 -> 确认页出现")
@@ -43,7 +43,7 @@ def main() -> None:
         "pending_json": '[{"file": "%s", "path": "%s", "invoice_no": "D202609007", "overwrite": true}]'
                         % (SAMPLE.name, path_json),
     })
-    assert "覆盖已有发票" in r.text, r.text[:800]
+    assert "Overwrote existing invoice" in r.text, r.text[:800]
     print("[OK] 确认覆盖 -> 入库成功")
 
     # 不勾选 -> 应提示跳过
@@ -51,14 +51,14 @@ def main() -> None:
     with SAMPLE.open("rb") as fh:
         r = client.post("/admin/upload", data={"csrf": csrf3},
                         files=[("files", (SAMPLE.name, fh, "application/octet-stream"))])
-    assert "发现重复 Invoice No." in r.text
+    assert "Duplicate Invoice No." in r.text
     csrf4 = get_csrf(client)
     r = client.post("/admin/upload", data={
         "csrf": csrf4, "confirm": "1",
         "pending_json": '[{"file": "%s", "path": "%s", "invoice_no": "D202609007", "overwrite": false}]'
                         % (SAMPLE.name, path_json),
     })
-    assert "已跳过" in r.text, r.text[:800]
+    assert "Skipped" in r.text, r.text[:800]
     print("[OK] 不勾选 -> 跳过，未覆盖")
 
     print("\n两段式上传测试全部通过")

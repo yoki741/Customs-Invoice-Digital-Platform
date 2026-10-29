@@ -28,13 +28,14 @@ def main() -> None:
     assert r.status_code == 303, (r.status_code, r.text[:200])
 
     import re
-    r = client.get("/admin/upload")
+    r = client.get("/invoices")
     csrf = re.search(r'name="csrf"\s+value="([^"]+)"', r.text).group(1)
 
     files = [("files", (p.name, p.read_bytes(), "application/octet-stream")) for p in FILES if p.exists()]
     r = client.post("/admin/upload", data={"csrf": csrf}, files=files)
     assert r.status_code == 200, (r.status_code, r.text[:500])
-    ok = r.text.count("新建") + r.text.count("替换")
+    ok = (r.text.count("New</td>") + r.text.count("Replaced existing invoice")
+          + r.text.count("Overwrote existing invoice"))
     print(f"upload status={r.status_code}, 文件数={len(files)}")
 
     for p in FILES:

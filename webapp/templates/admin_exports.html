@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}导出历史 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}导出历史{% endblock %}
-{% block crumb %}共 {{ total }} 条{% endblock %}
+{% block title %}Export History - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Export History{% endblock %}
+{% block crumb %}{{ total }} total{% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-body p-0">
@@ -9,33 +9,33 @@
       <table class="table table-sm mb-0">
         <thead>
           <tr>
-            <th>时间</th><th>操作人</th><th>发票</th><th>文件</th>
-            <th class="num">报关重量</th><th class="num">金额</th><th>状态</th><th>填写内容</th>
+            <th>Time</th><th>Operator</th><th>Invoices</th><th>File</th>
+            <th class="num">Customs Weight</th><th class="num">Amount</th><th>Status</th><th>Form Values</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
           <tr>
-            <td class="small">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td class="small">{{ r.created_at|localtime('%Y-%m-%d %H:%M:%S') }}</td>
             <td>{{ r.created_by or '-' }}</td>
             <td class="small">{{ r.invoice_nos }}</td>
             <td class="small text-break">{{ r.filename or '-' }}</td>
             <td class="num">{{ r.customs_weight or '-' }}</td>
             <td class="num">{{ '%.2f' % r.total_amount if r.total_amount else '-' }}</td>
             <td>
-              {% if r.success %}<span class="badge badge-ok">成功</span>
-              {% else %}<span class="badge badge-bad">失败</span>{% endif %}
+              {% if r.success %}<span class="badge badge-ok">OK</span>
+              {% else %}<span class="badge badge-bad">Failed</span>{% endif %}
             </td>
             <td class="small text-muted" style="max-width:340px">
               <details>
-                <summary class="text-decoration-underline">查看</summary>
+                <summary class="text-decoration-underline">View</summary>
                 <pre class="small mb-0 text-wrap">{{ r.form_values }}</pre>
                 {% if r.message %}<div class="text-danger">{{ r.message }}</div>{% endif %}
               </details>
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="8" class="text-center text-muted py-4">暂无导出记录</td></tr>
+          <tr><td colspan="8" class="text-center text-muted py-4">No export records yet</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -43,13 +43,13 @@
   </div>
   {% if pages > 1 %}
   <div class="card-footer d-flex justify-content-between">
-    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <span class="text-muted small">Page {{ page }} / {{ pages }}</span>
     <div>
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/admin/exports?page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/admin/exports?page={{ page - 1 }}">Previous</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/admin/exports?page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/admin/exports?page={{ page + 1 }}">Next</a>
       {% endif %}
     </div>
   </div>

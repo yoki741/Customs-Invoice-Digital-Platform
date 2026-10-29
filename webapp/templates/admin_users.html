@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}账号管理 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}账号管理{% endblock %}
-{% block crumb %}共 {{ rows|length }} 个账号{% endblock %}
+{% block title %}Accounts - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Accounts{% endblock %}
+{% block crumb %}{{ rows|length }} accounts{% endblock %}
 {% block content %}
 
 {% if flash %}
@@ -15,28 +15,28 @@
 {% endif %}
 
 <div class="card">
-  <div class="card-header">新建账号</div>
+  <div class="card-header">Create Account</div>
   <div class="card-body">
     <form class="row g-2 align-items-end" method="post" action="/admin/users">
       <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
       <div class="col-12 col-md-2">
-        <label class="form-label">账号</label>
+        <label class="form-label">Username</label>
         <input class="form-control form-control-sm" name="username" required>
       </div>
       <div class="col-12 col-md-2">
-        <label class="form-label">初始密码</label>
+        <label class="form-label">Initial Password</label>
         <input class="form-control form-control-sm" name="password" required minlength="4">
       </div>
       <div class="col-12 col-md-2">
-        <label class="form-label">姓名</label>
+        <label class="form-label">Name</label>
         <input class="form-control form-control-sm" name="display_name">
       </div>
       <div class="col-12 col-md-2">
-        <label class="form-label">部门 / 地区</label>
+        <label class="form-label">Dept / Region</label>
         <input class="form-control form-control-sm" name="dept">
       </div>
       <div class="col-12 col-md-2">
-        <label class="form-label">角色</label>
+        <label class="form-label">Role</label>
         <select class="form-select form-select-sm" name="role">
           {% for r, label in role_labels.items() %}
           <option value="{{ r }}" {% if r == 'type2' %}selected{% endif %}>{{ label }}</option>
@@ -44,11 +44,11 @@
         </select>
       </div>
       <div class="col-auto">
-        <button class="btn btn-primary btn-sm">创建</button>
+        <button class="btn btn-primary btn-sm">Create</button>
       </div>
     </form>
     <div class="small text-muted mt-2">
-      第一类：发票列表 + Excel 编辑 + 导出；第二类：仅查看每张发票的明细；管理员：全部权限。
+      Type 1: invoice list + Excel editing + export + Shipment List; Type 2: view details of each invoice only; Type 3: Shipment List + customs invoices; Admin: all permissions.
     </div>
   </div>
 </div>
@@ -59,8 +59,8 @@
       <table class="table table-sm mb-0">
         <thead>
           <tr>
-            <th>ID</th><th>账号</th><th>姓名</th><th>部门</th><th>角色</th>
-            <th>状态</th><th>创建时间</th><th class="text-end">操作</th>
+            <th>ID</th><th>Username</th><th>Name</th><th>Dept</th><th>Role</th>
+            <th>Status</th><th>Created At</th><th class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -78,25 +78,25 @@
                   <option value="{{ rl }}" {% if r.role == rl %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
                 </select>
-                <button class="btn btn-sm btn-outline-secondary py-0">改</button>
+                <button class="btn btn-sm btn-outline-secondary py-0">Change</button>
               </form>
             </td>
             <td>
-              {% if r.is_active %}<span class="badge badge-ok">启用</span>
-              {% else %}<span class="badge badge-off">停用</span>{% endif %}
+              {% if r.is_active %}<span class="badge badge-ok">Active</span>
+              {% else %}<span class="badge badge-off">Disabled</span>{% endif %}
             </td>
-            <td class="small text-muted">{{ r.created_at.strftime('%Y-%m-%d') }}</td>
+            <td class="small text-muted">{{ r.created_at|localtime('%Y-%m-%d') }}</td>
             <td class="text-end">
               <form method="post" action="/admin/users/{{ r.id }}/password" class="d-inline-flex gap-1">
                 <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
-                <input class="form-control form-control-sm" style="width:110px" name="password" placeholder="新密码" minlength="4" required>
-                <button class="btn btn-sm btn-outline-primary py-0">重置密码</button>
+                <input class="form-control form-control-sm" style="width:110px" name="password" placeholder="New password" minlength="4" required>
+                <button class="btn btn-sm btn-outline-primary py-0">Reset Password</button>
               </form>
               {% if r.id != user.id %}
               <form method="post" action="/admin/users/{{ r.id }}/toggle" class="d-inline">
                 <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <button class="btn btn-sm {% if r.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %} py-0">
-                  {% if r.is_active %}停用{% else %}启用{% endif %}
+                  {% if r.is_active %}Disable{% else %}Enable{% endif %}
                 </button>
               </form>
               {% endif %}

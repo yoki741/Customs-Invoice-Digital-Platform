@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}统计报表 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}统计报表{% endblock %}
+{% block title %}Statistics - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Statistics{% endblock %}
 {% block crumb %}{% endblock %}
 {% block content %}
 
@@ -8,25 +8,25 @@
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico blue">▤</div>
-      <div><div class="val">{{ stats.invoices }}</div><div class="lbl">发票台账数</div></div>
+      <div><div class="val">{{ stats.invoices }}</div><div class="lbl">Invoice Records</div></div>
     </div>
   </div>
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico green">↓</div>
-      <div><div class="val">{{ stats.exports }}</div><div class="lbl">成功生成次数</div></div>
+      <div><div class="val">{{ stats.exports }}</div><div class="lbl">Successful Generations</div></div>
     </div>
   </div>
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico amber">⚠</div>
-      <div><div class="val">{{ stats.failed }}</div><div class="lbl">失败尝试</div></div>
+      <div><div class="val">{{ stats.failed }}</div><div class="lbl">Failed Attempts</div></div>
     </div>
   </div>
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico red">￥</div>
-      <div><div class="val">{{ '%.0f' % monthly[-1].amount if monthly else 0 }}</div><div class="lbl">最近一月金额($)</div></div>
+      <div><div class="val">{{ '%.0f' % monthly[-1].amount if monthly else 0 }}</div><div class="lbl">Latest Month Amount ($)</div></div>
     </div>
   </div>
 </div>
@@ -34,16 +34,17 @@
 <div class="row g-3 mt-1">
   <div class="col-12 col-xl-8">
     <div class="card">
-      <div class="card-header py-2 fw-semibold">近 12 个月生成统计</div>
+      <div class="card-header py-2 fw-semibold">Generations in the Last 12 Months</div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-sm mb-0">
           <thead>
             <tr>
-              <th>月份</th>
-              <th>生成次数</th>
-              <th class="num">报关重量(KG)</th>
-              <th class="num">金额($)</th>
-              <th style="width:30%">次数分布</th>
+              <th>Month</th>
+              <th>Generations</th>
+              <th class="num">Customs Weight (KG)</th>
+              <th class="num">Amount ($)</th>
+              <th style="width:30%">Distribution</th>
             </tr>
           </thead>
           <tbody>
@@ -60,42 +61,47 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="5" class="text-center text-muted py-4">暂无导出记录</td></tr>
+            <tr><td colspan="5" class="text-center text-muted py-4">No export records yet</td></tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </div>
   <div class="col-12 col-xl-4">
     <div class="card">
-      <div class="card-header py-2 fw-semibold">台账分布 · 按公司</div>
+      <div class="card-header py-2 fw-semibold">Records by Company</div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-sm mb-0">
-          <thead><tr><th>公司</th><th class="num">发票数</th></tr></thead>
+          <thead><tr><th>Company</th><th class="num">Invoices</th></tr></thead>
           <tbody>
             {% for c in stats.companies %}
             <tr><td>{{ c.name }}</td><td class="num">{{ c.cnt }}</td></tr>
             {% else %}
-            <tr><td colspan="2" class="text-center text-muted py-3">暂无数据</td></tr>
+            <tr><td colspan="2" class="text-center text-muted py-3">No data</td></tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
     <div class="card mt-3">
-      <div class="card-header py-2 fw-semibold">台账分布 · 按运输方式</div>
+      <div class="card-header py-2 fw-semibold">Records by Ship Mode</div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-sm mb-0">
-          <thead><tr><th>运输</th><th class="num">发票数</th></tr></thead>
+          <thead><tr><th>Transport</th><th class="num">Invoices</th></tr></thead>
           <tbody>
             {% for t in stats.transports %}
-            <tr><td>{{ t.name }}</td><td class="num">{{ t.cnt }}</td></tr>
+            <tr><td>{{ {'海运': 'Sea', '空运': 'Air', '陆运': 'Truck'}.get(t.name, t.name) }}</td><td class="num">{{ t.cnt }}</td></tr>
             {% else %}
-            <tr><td colspan="2" class="text-center text-muted py-3">暂无数据</td></tr>
+            <tr><td colspan="2" class="text-center text-muted py-3">No data</td></tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </div>

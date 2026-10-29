@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}操作日志 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}操作日志{% endblock %}
-{% block crumb %}共 {{ total }} 条{% endblock %}
+{% block title %}Audit Log - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Audit Log{% endblock %}
+{% block crumb %}{{ total }} total{% endblock %}
 {% block content %}
 {% set qs = ('q=' ~ (q | urlencode)) if q else '' %}
 {% set qs = qs ~ ('&action=' ~ (action | urlencode)) if action else qs %}
@@ -9,21 +9,21 @@
   <div class="card-body py-2">
     <form class="row g-2 align-items-end" method="get" action="/admin/audit">
       <div class="col-12 col-md-4">
-        <label class="form-label">搜索</label>
+        <label class="form-label">Search</label>
         <input class="form-control form-control-sm" name="q" value="{{ q }}"
-               placeholder="操作人 / 内容">
+               placeholder="Operator / Detail">
       </div>
       <div class="col-6 col-md-3">
-        <label class="form-label">操作类型</label>
+        <label class="form-label">Action</label>
         <select class="form-select form-select-sm" name="action">
-          <option value="">全部</option>
+          <option value="">All</option>
           {% for a in actions %}
           <option value="{{ a }}" {% if action == a %}selected{% endif %}>{{ a }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-auto">
-        <button class="btn btn-primary btn-sm">筛选</button>
+        <button class="btn btn-primary btn-sm">Filter</button>
       </div>
     </form>
   </div>
@@ -35,19 +35,19 @@
       <table class="table table-sm table-hover mb-0">
         <thead>
           <tr>
-            <th>时间</th><th>操作人</th><th>操作</th><th>内容</th>
+            <th>Time</th><th>Operator</th><th>Action</th><th>Detail</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
           <tr>
-            <td class="small">{{ r.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td class="small">{{ r.created_at|localtime('%Y-%m-%d %H:%M:%S') }}</td>
             <td>{{ r.username }}</td>
             <td><span class="badge badge-info">{{ r.action }}</span></td>
             <td class="small text-wrap" style="max-width:600px">{{ r.detail or '-' }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="4" class="text-center text-muted py-4">暂无日志</td></tr>
+          <tr><td colspan="4" class="text-center text-muted py-4">No log entries yet</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -55,13 +55,13 @@
   </div>
   {% if pages > 1 %}
   <div class="card-footer d-flex justify-content-between">
-    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <span class="text-muted small">Page {{ page }} / {{ pages }}</span>
     <div>
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/admin/audit?{{ qs }}&page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/admin/audit?{{ qs }}&page={{ page - 1 }}">Previous</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/admin/audit?{{ qs }}&page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/admin/audit?{{ qs }}&page={{ page + 1 }}">Next</a>
       {% endif %}
     </div>
   </div>

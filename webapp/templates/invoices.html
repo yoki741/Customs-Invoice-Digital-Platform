@@ -1,13 +1,24 @@
 {% extends "base.html" %}
-{% block title %}发票列表 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}发票列表{% endblock %}
-{% block crumb %}共 {{ total }} 条{% endblock %}
+{% block title %}Invoice List - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Invoice List{% endblock %}
+{% block crumb %}{{ total }} total{% endblock %}
+{% block head %}
+<style>
+  /* 新导入发票行 3 秒高光后淡出 */
+  @keyframes row-flash {
+    0% { background-color: #ffe08a; }
+    70% { background-color: #fff3bf; }
+    100% { background-color: transparent; }
+  }
+  tr.row-flash > td { animation: row-flash 3s ease-out forwards; }
+</style>
+{% endblock %}
 {% block content %}
 
 <div id="continue-banner" class="alert alert-info py-2 d-flex align-items-center gap-2 d-none">
-  <span class="small">上次编辑的发票：<b id="last-edit-nos"></b></span>
-  <a class="btn btn-sm btn-primary" id="continue-link" href="#">继续编辑</a>
-  <button type="button" class="btn-close ms-auto" onclick="dismissContinue()" title="不再显示"></button>
+  <span class="small">Last edited invoices: <b id="last-edit-nos"></b></span>
+  <a class="btn btn-sm btn-primary" id="continue-link" href="#">Continue Editing</a>
+  <button type="button" class="btn-close ms-auto" onclick="dismissContinue()" title="Dismiss"></button>
 </div>
 
 {% if flash %}
@@ -17,48 +28,158 @@
 </div>
 {% endif %}
 
+<div class="modal fade" id="import-modal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="/admin/upload" enctype="multipart/form-data" id="upload-form">
+        <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Import Data (.xlsm / .xlsx)</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label">Choose source files (multiple allowed)</label>
+            <input class="form-control" type="file" name="files" multiple accept=".xlsm,.xlsx" id="file-input">
+            <div id="file-list" class="mt-2 small"></div>
+          </div>
+          <div class="small text-muted">
+            Hold <b>Ctrl</b> to pick files one by one, <b>Shift</b> to select a range; only .xlsm / .xlsx, up to 20MB per file.<br>
+            If a duplicate Invoice No. is detected you will be asked to confirm before overwriting. Files are stored in data/uploads/.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" id="btn-upload">Import Selected Files</button>
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <span class="small text-muted ms-auto" id="file-count"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if pending %}
+<div class="modal fade" id="pending-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="/admin/upload" id="confirm-form">
+        <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
+        <input type="hidden" name="confirm" value="1">
+        <input type="hidden" name="pending_json" id="pending-json" value="[]">
+        <div class="modal-header bg-warning-subtle">
+          <h5 class="modal-title">Duplicate Invoice No. found, please confirm whether to overwrite</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="table-responsive">
+            <table class="table table-sm mb-3">
+              <thead><tr>
+                <th>File</th><th>Invoice No.</th><th>Imported At</th><th>Imported By</th><th>Existing Source File</th><th>Overwrite</th>
+              </tr></thead>
+              <tbody>
+                {% for p in pending %}
+                <tr>
+                  <td>{{ p.file }}</td>
+                  <td class="fw-semibold">{{ p.invoice_no }}</td>
+                  <td>{{ p.uploaded_at }}</td>
+                  <td>{{ p.uploaded_by }}</td>
+                  <td class="small">{{ p.source_filename }}</td>
+                  <td><input type="checkbox" class="form-check-input overwrite-check"
+                             data-file="{{ p.file }}" data-path="{{ p.path }}"
+                             data-invoice-no="{{ p.invoice_no }}" data-overwrite="1" checked></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="small text-muted">Checked = overwrite the existing invoice; unchecked = skip this file. Files without duplicates have already been imported.</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-warning" type="submit">Confirm Import</button>
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if results is not none %}
+<div class="modal fade" id="results-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Import Results</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>File</th><th>Invoice No.</th><th>Result</th><th>Message</th></tr></thead>
+            <tbody>
+              {% for r in results %}
+              <tr class="{% if r.ok %}table-success{% else %}table-danger{% endif %}">
+                <td>{{ r.file }}</td>
+                <td>{{ r.get('invoice_no', '-') }}</td>
+                <td>{% if r.ok %}OK{% else %}Failed{% endif %}</td>
+                <td class="small">{{ r.message }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="card no-print">
   <div class="card-body py-2">
     <form class="row g-2 align-items-end" method="get" action="/invoices">
       <div class="col-12 col-md-4">
-        <label class="form-label">搜索</label>
+        <label class="form-label">Search</label>
         <input class="form-control form-control-sm" name="q" value="{{ q }}"
-               placeholder="发票号 / 收货方 / 供应商 / 文件名">
+               placeholder="Invoice No. / Consignee / Supplier / Filename">
       </div>
       <div class="col-6 col-md-2">
-        <label class="form-label">运输方式</label>
+        <label class="form-label">Ship Mode</label>
         <select class="form-select form-select-sm" name="transport">
-          <option value="">全部</option>
+          <option value="">All</option>
           {% for t in ['海运', '空运', '陆运'] %}
-          <option value="{{ t }}" {% if transport == t %}selected{% endif %}>{{ t }}</option>
+          <option value="{{ t }}" {% if transport == t %}selected{% endif %}>{{ {'海运': 'Sea', '空运': 'Air', '陆运': 'Truck'}.get(t, t) }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-6 col-md-2">
-        <label class="form-label">公司</label>
+        <label class="form-label">Company</label>
         <select class="form-select form-select-sm" name="company">
-          <option value="">全部</option>
+          <option value="">All</option>
           {% for c in ['Vanco', 'Eastex'] %}
           <option value="{{ c }}" {% if company == c %}selected{% endif %}>{{ c }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-6 col-md-2">
-        <label class="form-label">导入日期 从</label>
+        <label class="form-label">Imported From</label>
         <input type="date" class="form-control form-control-sm" name="date_from" value="{{ date_from }}">
       </div>
       <div class="col-6 col-md-2">
-        <label class="form-label">导入日期 到</label>
+        <label class="form-label">Imported To</label>
         <input type="date" class="form-control form-control-sm" name="date_to" value="{{ date_to }}">
       </div>
       <div class="col-auto">
-        <button class="btn btn-primary btn-sm">筛选</button>
+        <button class="btn btn-primary btn-sm">Filter</button>
         <a class="btn btn-outline-secondary btn-sm" href="/invoices"
-           title="清空全部筛选条件">清空</a>
+           title="Clear all filters">Clear</a>
       </div>
       <div class="col-auto ms-auto">
-        <button type="button" class="btn btn-success btn-sm" onclick="openSelected()">合并编辑 / 导出</button>
-        <div class="form-text mt-0">仅支持合并同一 Delivery to 的发票</div>
+        <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#import-modal">Import Data</button>
+        <button type="button" class="btn btn-success btn-sm" onclick="openSelected()">Merge Edit / Export</button>
+        <div class="form-text mt-0">Only invoices with the same Delivery to can be merged</div>
       </div>
     </form>
   </div>
@@ -72,31 +193,31 @@
           <tr>
             <th style="width:34px"><input type="checkbox" class="form-check-input" id="check-all" onclick="toggleAll(this)"></th>
             <th>Invoice No.</th>
-            <th>日期</th>
+            <th>Date</th>
             <th>Ship Mode</th>
-            <th>运输</th>
-            <th>公司</th>
+            <th>Transport</th>
+            <th>Company</th>
             <th>Delivery to</th>
-            <th>供应商</th>
-            <th class="num">件数</th>
-            <th class="num">净重</th>
-            <th class="num">毛重</th>
-            <th class="num">明细</th>
-            <th>源文件</th>
-            <th>导入时间</th>
-            <th class="text-end">操作</th>
+            <th>Supplier</th>
+            <th class="num">Rolls</th>
+            <th class="num">Net Weight</th>
+            <th class="num">Gross Weight</th>
+            <th class="num">Items</th>
+            <th>Source File</th>
+            <th>Imported At</th>
+            <th class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-          <tr>
+          <tr {% if r.id in highlight_ids %}data-flash="1"{% endif %}>
             <td><input type="checkbox" class="form-check-input row-check" value="{{ r.id }}"
                       data-delivery="{{ r.delivery_to or '' }}"
                       data-invoice-no="{{ r.invoice_no or '-' }}"></td>
             <td class="fw-semibold">{{ r.invoice_no or '-' }}</td>
             <td>{{ r.invoice_date or '-' }}</td>
             <td>{{ r.ship_mode or '-' }}</td>
-            <td>{% if r.transport %}<span class="badge badge-transport-{{ r.transport }}">{{ r.transport }}</span>{% else %}-{% endif %}</td>
+            <td>{% if r.transport %}<span class="badge badge-transport-{{ r.transport }}">{{ {'海运': 'Sea', '空运': 'Air', '陆运': 'Truck'}.get(r.transport, r.transport) }}</span>{% else %}-{% endif %}</td>
             <td>{{ r.company or '-' }}</td>
             <td class="small">{{ r.delivery_to or '-' }}</td>
             <td class="small">{{ r.supplier_code or '-' }}</td>
@@ -105,22 +226,22 @@
             <td class="num">{{ '%.2f' % r.gross_weight if r.gross_weight else '-' }}</td>
             <td class="num">{{ r.item_count }}</td>
             <td class="small text-muted">{{ r.source_filename }}</td>
-            <td class="small text-muted">{{ r.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="small text-muted">{{ r.uploaded_at|localtime('%Y-%m-%d %H:%M') }}</td>
             <td class="text-end">
-              <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.id }}">编辑 / 导出</a>
+              <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.id }}">Edit / Export</a>
               {% if user and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
               <form method="post" action="/admin/invoices/{{ r.id }}/delete" class="d-inline"
-                    onsubmit="return confirm('确定删除发票 {{ r.invoice_no or r.id }}？\n明细一并删除，源文件保留。此操作不可恢复。')">
+                    onsubmit="return confirm('Delete invoice {{ r.invoice_no or r.id }}? Its details will be deleted too; the source file is kept. This cannot be undone.')">
                 <input type="hidden" name="csrf" value="{{ csrf_token(request) }}">
                 <input type="hidden" name="back" value="/invoices?q={{ q }}&transport={{ transport }}&company={{ company }}&date_from={{ date_from }}&date_to={{ date_to }}">
-                <button class="btn btn-sm btn-outline-danger py-0">删除</button>
+                <button class="btn btn-sm btn-outline-danger py-0">Delete</button>
               </form>
               {% endif %}
             </td>
           </tr>
           {% else %}
           <tr><td colspan="15" class="text-center text-muted py-4">
-            暂无数据。请管理员在「数据导入」上传 .xlsm 源文件。
+            No data yet. Use "Import Data" above to upload .xlsm source files.
           </td></tr>
           {% endfor %}
         </tbody>
@@ -129,14 +250,14 @@
   </div>
   {% if pages > 1 %}
   <div class="card-footer d-flex justify-content-between align-items-center">
-    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <span class="text-muted small">Page {{ page }} / {{ pages }}</span>
     <div>
       {% set qs = 'q=' ~ q ~ '&transport=' ~ transport ~ '&company=' ~ company ~ '&date_from=' ~ date_from ~ '&date_to=' ~ date_to %}
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/invoices?{{ qs }}&page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/invoices?{{ qs }}&page={{ page - 1 }}">Previous</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/invoices?{{ qs }}&page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/invoices?{{ qs }}&page={{ page + 1 }}">Next</a>
       {% endif %}
     </div>
   </div>
@@ -169,19 +290,97 @@ function dismissContinue() {
 function toggleAll(box) {
   document.querySelectorAll('.row-check').forEach(c => { c.checked = box.checked; });
 }
+
+// ---- 数据导入弹窗 ----
+const ALLOWED_EXT = ['.xlsm', '.xlsx'];
+const fileInput = document.getElementById('file-input');
+const fileList = document.getElementById('file-list');
+const fileCount = document.getElementById('file-count');
+
+function renderFiles() {
+  const files = [...fileInput.files];
+  fileCount.textContent = files.length ? (files.length + ' file(s) selected') : '';
+  fileList.innerHTML = '';
+  files.forEach((f) => {
+    const span = document.createElement('span');
+    span.className = 'badge bg-light text-dark border me-1 mb-1';
+    span.textContent = f.name;
+    fileList.appendChild(span);
+  });
+}
+
+fileInput.addEventListener('change', renderFiles);
+
+document.getElementById('upload-form').addEventListener('submit', (e) => {
+  const files = [...fileInput.files];
+  if (!files.length) {
+    e.preventDefault();
+    alert('Please choose the files to import first');
+    return;
+  }
+  const bad = files.filter(f => {
+    const dot = f.name.lastIndexOf('.');
+    return dot < 0 || !ALLOWED_EXT.includes(f.name.slice(dot).toLowerCase());
+  });
+  if (bad.length) {
+    e.preventDefault();
+    alert('The following files are not supported (only .xlsm / .xlsx):\n\n' +
+          bad.map(f => '· ' + f.name).join('\n'));
+    return;
+  }
+  const btn = document.getElementById('btn-upload');
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+});
+
+const confirmForm = document.getElementById('confirm-form');
+if (confirmForm) {
+  confirmForm.addEventListener('submit', () => {
+    const all = [...document.querySelectorAll('.overwrite-check')].map(c => ({
+      file: c.dataset.file,
+      path: c.dataset.path,
+      invoice_no: c.dataset.invoiceNo,
+      overwrite: c.checked,
+    }));
+    document.getElementById('pending-json').value = JSON.stringify(all);
+  });
+}
+
+// ---- 导入弹窗自动弹出 + 新导入行 3 秒高光 ----
+document.addEventListener('DOMContentLoaded', () => {
+  const playFlash = () => {
+    document.querySelectorAll('tr[data-flash="1"]').forEach(tr => {
+      tr.classList.add('row-flash');
+    });
+  };
+  const pendingModal = document.getElementById('pending-modal');
+  const resultsModal = document.getElementById('results-modal');
+  if (!pendingModal && !resultsModal) { playFlash(); return; }
+  if (pendingModal && resultsModal) {
+    // 先弹重复确认，关闭后再弹导入结果
+    pendingModal.addEventListener('hidden.bs.modal', () =>
+      bootstrap.Modal.getOrCreateInstance(resultsModal).show());
+    resultsModal.addEventListener('hidden.bs.modal', playFlash);
+    bootstrap.Modal.getOrCreateInstance(pendingModal).show();
+  } else {
+    const modal = pendingModal || resultsModal;
+    modal.addEventListener('hidden.bs.modal', playFlash);
+    bootstrap.Modal.getOrCreateInstance(modal).show();
+  }
+});
 function openSelected() {
   const boxes = [...document.querySelectorAll('.row-check:checked')];
-  if (!boxes.length) { alert('请先勾选要编辑的发票（可多选合并导出）'); return; }
+  if (!boxes.length) { alert('Select the invoices to edit first (you can merge several)'); return; }
   const groups = {};
   boxes.forEach(c => {
-    const key = (c.dataset.delivery || '').trim() || '(未填写)';
+    const key = (c.dataset.delivery || '').trim() || '(not set)';
     (groups[key] = groups[key] || []).push(c.value);
   });
   const names = Object.keys(groups);
   if (names.length > 1) {
-    const detail = names.map(n => `${n}：${groups[n].length} 张`).join('\n');
-    alert('只能合并同一 Delivery to 的发票，当前选中涉及：\n\n' + detail +
-          '\n\n请只勾选 Delivery to 相同的发票后再试。');
+    const detail = names.map(n => `${n}: ${groups[n].length} invoice(s)`).join('\n');
+    alert('Only invoices with the same Delivery to can be merged. Your selection spans:\n\n' + detail +
+          '\n\nPlease select only invoices with the same Delivery to and try again.');
     return;
   }
   window.location.href = '/invoices/edit?ids=' + boxes.map(c => c.value).join(',') +

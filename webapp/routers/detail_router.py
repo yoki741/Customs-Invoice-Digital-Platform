@@ -29,6 +29,7 @@ from ..service import (
     export_container,
     export_map_for,
     get_exporter,
+    shipment_ref_map,
 )
 from ..templates_setup import templates
 
@@ -131,7 +132,8 @@ async def detail_list(
     # 选中发票单独加载完整对象（含明细，供抬头与单价缺失提示）
     current = db.get(Invoice, invoice_id) if invoice_id else None
 
-    attach_detail_extras(rows)
+    ref_map = shipment_ref_map(db)
+    attach_detail_extras(rows, ref_map)
     current_bill_no = (export_bill_no(current) or "-") if current else "-"
     current_container = (export_container(current) or "-") if current else "-"
     current_missing_prices = _missing_prices_for_invoice(current) if current else []
@@ -229,16 +231,17 @@ async def details_export(
         .limit(20000)
         .all()
     )
-    attach_detail_extras(rows)
+    ref_map = shipment_ref_map(db)
+    attach_detail_extras(rows, ref_map)
 
     wb = Workbook()
     ws = wb.active
     ws.title = "发票明细"
     headers = [
-        "Fabric Invoice No.", "柜号", "Invoice No.", "PO No.", "Description", "Colour",
-        "Size", "Fabric Type", "CARTON", "净重", "毛重", "Length",
-        "Quantity", "Unit Price", "Amount", "报关净重", "报关单价",
-        "报关金额", "备注",
+        "Fabric Invoice No.", "Invoice No.", "PO No.", "Description", "Colour",
+        "Size", "Fabric Type", "CARTON", "Net Weight", "Gross Weight", "Length",
+        "Quantity", "Unit Price", "Amount", "Customs Net Weight", "Customs Unit Price",
+        "Customs Amount", "ID", "Container No.", "Remarks",
     ]
     header_font = Font(bold=True)
     orange_fill = PatternFill(fill_type="solid", start_color="F8CBAD")
@@ -256,7 +259,6 @@ async def details_export(
             remark_parts.append("无单价（需在表格 I 列手动填写）")
         ws.append([
             inv.invoice_no if inv else None,
-            it.container_no,
             it.export_bill_no,
             it.po_no,
             it.description,
@@ -273,13 +275,15 @@ async def details_export(
             it.cw,
             it.up,
             it.ca,
+            it.ref_id or None,
+            it.container_no,
             "；".join(remark_parts),
         ])
         if it.up == 0:
-            ws.cell(row=ws.max_row, column=17).fill = orange_fill
+            ws.cell(row=ws.max_row, column=16).fill = orange_fill
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
-    widths = [14, 16, 14, 14, 40, 12, 12, 14, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 30]
+    widths = [14, 14, 14, 40, 12, 12, 14, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 12, 16, 30]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
 

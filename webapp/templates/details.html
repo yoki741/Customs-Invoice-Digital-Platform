@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}发票明细 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}发票明细{% endblock %}
-{% block crumb %}共 {{ total }} 条明细
+{% block title %}Invoice Details - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Invoice Details{% endblock %}
+{% block crumb %}{{ total }} detail lines
 <span class="ico-q ms-1" data-bs-toggle="tooltip" data-bs-placement="bottom"
       data-bs-html="true"
-      title="输入发票号或客户名搜索后，下方明细表会同步只显示匹配发票的明细行。<br>也可在「选择发票」下拉选中一张发票查看其抬头、提单号和全部明细。<br>不搜索不选择时，默认显示全部发票的明细。">?</span>
+      title="Search by invoice no. or customer name and the table below only shows detail lines of the matching invoices.<br>You can also pick an invoice from the &quot;Select Invoice&quot; dropdown to see its header, bill no. and all detail lines.<br>With no search and no selection, detail lines of all invoices are shown by default.">?</span>
 {% endblock %}
 {% block content %}
 
@@ -19,41 +19,41 @@
   <div class="card-body py-2">
     <form class="row g-2 align-items-end" method="get" action="/details">
       <div class="col-12 col-md-3">
-        <label class="form-label">搜索发票（号 / 客户）</label>
+        <label class="form-label">Search Invoices (No. / Customer)</label>
         <input class="form-control form-control-sm" name="inv_q" value="{{ inv_q }}"
-               placeholder="输入发票号或客户名，回车查询">
+               placeholder="Type invoice no. or customer name, press Enter">
       </div>
       <div class="col-12 col-md-3">
-        <label class="form-label">选择发票</label>
+        <label class="form-label">Select Invoice</label>
         <select class="form-select form-select-sm" name="invoice_id" onchange="this.form.submit()">
-          <option value="0">全部发票</option>
+          <option value="0">All Invoices</option>
           {% for i in invoices %}
           <option value="{{ i.id }}" {% if invoice_id == i.id %}selected{% endif %}>
-            {{ i.invoice_no }} · {{ i.delivery_to or '-' }} · {{ i.transport or '-' }}{% if i.id in generated_ids %} · 已生成{% endif %}
+            {{ i.invoice_no }} · {{ i.delivery_to or '-' }} · {{ i.transport or '-' }}{% if i.id in generated_ids %} · Generated{% endif %}
           </option>
           {% endfor %}
         </select>
         {% if invoices|length >= 500 %}
-        <div class="form-text text-warning">匹配发票超过 500 张，仅显示最近 500 张，请用搜索缩小范围</div>
+        <div class="form-text text-warning">More than 500 matching invoices; only the latest 500 are shown. Narrow the range with the search.</div>
         {% endif %}
         {% if inv_q and not invoices %}
-        <div class="form-text text-warning">没有匹配「{{ inv_q }}」的发票，请检查发票号或客户名</div>
+        <div class="form-text text-warning">No invoice matches "{{ inv_q }}"; check the invoice no. or customer name</div>
         {% endif %}
       </div>
       <div class="col-12 col-md-3">
-        <label class="form-label">搜索明细</label>
+        <label class="form-label">Search Details</label>
         <input class="form-control form-control-sm" name="q" value="{{ q }}"
                placeholder="Description / Fabric Type / PO No. / Colour">
       </div>
       <div class="col-auto">
-        <button class="btn btn-primary btn-sm">查询</button>
+        <button class="btn btn-primary btn-sm">Search</button>
         <a class="btn btn-outline-secondary btn-sm" href="/details"
-           title="清空全部查询条件，返回全部发票明细">清空</a>
+           title="Clear all filters and show all invoice details">Clear</a>
       </div>
       <div class="col-auto ms-auto">
         <a class="btn btn-outline-success btn-sm"
            href="/details/export?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&check_status={{ check_status }}"
-           title="按当前筛选条件导出全部明细行（最多2万行），含报关净重/单价/金额">导出 Excel</a>
+           title="Export all detail rows matching the current filter (up to 20,000 rows), incl. customs net weight / unit price / amount">Export Excel</a>
       </div>
     </form>
   </div>
@@ -61,15 +61,15 @@
 
 {% if search_active and not current and invoice_match_count > 1 %}
 <div class="alert alert-secondary py-2 mt-2 mb-0">
-  当前按搜索/筛选匹配到 <b>{{ invoice_match_count }}</b> 张发票，下方明细表显示这 {{ invoice_match_count }} 张发票的明细（合并列表）。
+  Your search/filter matches <b>{{ invoice_match_count }}</b> invoices; the table below shows their detail lines combined.
 </div>
 {% endif %}
 
 {% if current %}
 {% if current_missing_prices %}
 <div class="alert alert-warning py-2 mt-3 mb-0">
-  以下面料类型未在单价表中找到单价：<b>{{ current_missing_prices | join('、') }}</b>。
-  导出的报关表中对应单价单元格为橙色底纹（金额按 0 计），需在 Excel 中手动补填。
+  No unit price found in the price list for the following fabric types: <b>{{ current_missing_prices | join(', ') }}</b>.
+  In the exported customs sheet those unit price cells are shaded orange (amounts count as 0) and must be filled in manually in Excel.
 </div>
 {% endif %}
 <div class="card mt-3">
@@ -77,26 +77,26 @@
     <div class="row row-cols-auto g-3 small">
       <div class="col"><span class="text-muted">Fabric Invoice No.:</span> <b>{{ current.invoice_no }}</b></div>
       <div class="col"><span class="text-muted">Invoice No.:</span> <b>{{ current_bill_no }}</b></div>
-      <div class="col"><span class="text-muted">柜号:</span> <b>{{ current_container }}</b></div>
+      <div class="col"><span class="text-muted">Container No.:</span> <b>{{ current_container }}</b></div>
       <div class="col">
-        <span class="text-muted">生成状态:</span>
+        <span class="text-muted">Generation Status:</span>
         {% if current_export %}
-        <span class="badge bg-success">已生成</span>
-        <span class="small text-muted">v{{ current_export.version }} · {{ current_export.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        <span class="badge bg-success">Generated</span>
+        <span class="small text-muted">v{{ current_export.version }} · {{ current_export.created_at|localtime('%Y-%m-%d %H:%M') }}</span>
         {% else %}
-        <span class="badge bg-secondary">未生成</span>
+        <span class="badge bg-secondary">Not Generated</span>
         {% endif %}
       </div>
-      <div class="col"><span class="text-muted">日期:</span> {{ current.invoice_date or '-' }}</div>
+      <div class="col"><span class="text-muted">Date:</span> {{ current.invoice_date or '-' }}</div>
       <div class="col"><span class="text-muted">Ship Mode:</span> {{ current.ship_mode or '-' }}</div>
-      <div class="col"><span class="text-muted">运输:</span> {% if current.transport %}<span class="badge badge-transport-{{ current.transport }}">{{ current.transport }}</span>{% endif %}</div>
+      <div class="col"><span class="text-muted">Transport:</span> {% if current.transport %}<span class="badge badge-transport-{{ current.transport }}">{{ {'海运': 'Sea', '空运': 'Air', '陆运': 'Truck'}.get(current.transport, current.transport) }}</span>{% endif %}</div>
       <div class="col"><span class="text-muted">Bill to:</span> {{ current.bill_to or '-' }}</div>
       <div class="col"><span class="text-muted">Delivery to:</span> {{ current.delivery_to or '-' }}</div>
-      <div class="col"><span class="text-muted">目的港:</span> {{ current.destination or '-' }}</div>
-      <div class="col"><span class="text-muted">船名/航班:</span> {{ current.vessel_flight or '-' }}</div>
-      <div class="col"><span class="text-muted">件数:</span> {{ '%g' % current.rolls }}</div>
-      <div class="col"><span class="text-muted">净重:</span> {{ '%.2f' % current.net_weight }} KGS</div>
-      <div class="col"><span class="text-muted">毛重:</span> {{ '%.2f' % current.gross_weight }} KGS</div>
+      <div class="col"><span class="text-muted">Destination:</span> {{ current.destination or '-' }}</div>
+      <div class="col"><span class="text-muted">Vessel / Flight:</span> {{ current.vessel_flight or '-' }}</div>
+      <div class="col"><span class="text-muted">Rolls:</span> {{ '%g' % current.rolls }}</div>
+      <div class="col"><span class="text-muted">Net Weight:</span> {{ '%.2f' % current.net_weight }} KGS</div>
+      <div class="col"><span class="text-muted">Gross Weight:</span> {{ '%.2f' % current.gross_weight }} KGS</div>
     </div>
   </div>
 </div>
@@ -109,7 +109,6 @@
         <thead>
           <tr>
             <th>Fabric Invoice No.</th>
-            <th>柜号</th>
             <th>Invoice No.</th>
             <th>PO No.</th>
             <th>Description</th>
@@ -117,22 +116,23 @@
             <th>Size</th>
             <th>Fabric Type</th>
             <th class="num">CARTON</th>
-            <th class="num">净重</th>
-            <th class="num">毛重</th>
+            <th class="num">Net Weight</th>
+            <th class="num">Gross Weight</th>
             <th class="num">Length</th>
             <th class="num">Quantity</th>
             <th class="num">Unit Price</th>
             <th class="num">Amount</th>
-            <th class="num" title="净重 × 运输比例（海94% / 空95% / 陆94%），* 表示不在导出范围(17-44行)">报关净重</th>
-            <th class="num" title="导出报关表 I 列单价（按面料类型查价格表），* 表示不在导出范围">报关单价</th>
-            <th class="num" title="报关净重 × 报关单价，* 表示不在导出范围">报关金额</th>
+            <th class="num" title="Net weight × transport ratio (sea 94% / air 95% / truck 94%); * means outside the export range (rows 17-44)">Customs Net Weight</th>
+            <th class="num" title="Unit price in column I of the exported customs sheet (looked up by fabric type); * means outside the export range">Customs Unit Price</th>
+            <th class="num" title="Customs net weight × customs unit price; * means outside the export range">Customs Amount</th>
+            <th>ID</th>
+            <th>Container No.</th>
           </tr>
         </thead>
         <tbody>
           {% for it in rows %}
           <tr>
             <td class="small">{{ it.invoice.invoice_no if it.invoice else '-' }}</td>
-            <td class="small">{{ it.container_no or '-' }}</td>
             <td class="small fw-semibold">{{ it.export_bill_no or '-' }}</td>
             <td class="small">{{ it.po_no or '-' }}</td>
             <td class="small wrap">{{ it.description or '-' }}</td>
@@ -146,30 +146,32 @@
             <td class="num">{{ '%.2f' % it.quantity if it.quantity else '-' }}</td>
             <td class="num">{{ '%.4g' % it.unit_price if it.unit_price else '-' }}</td>
             <td class="num">{{ '%.2f' % it.amount if it.amount else '-' }}</td>
-            <td class="num" {% if not it.in_export %}title="不在导出范围(17-44行)"{% endif %}>
+            <td class="num" {% if not it.in_export %}title="Outside the export range (rows 17-44)"{% endif %}>
               {{ '%.3f' % it.cw if it.cw else '-' }}{% if not it.in_export %}*{% endif %}
             </td>
             <td class="num {% if it.up == 0 %}text-warning fw-semibold{% endif %}"
-                {% if it.up == 0 %}title="价格表中未找到该面料的单价，需在导出后手动填写"{% endif %}>
-              {% if it.up is none %}-{% else %}{{ '%.4g' % it.up }}{% if it.up == 0 %}（无单价）{% endif %}{% endif %}{% if not it.in_export %}*{% endif %}
+                {% if it.up == 0 %}title="No unit price for this fabric in the price list; fill it in manually after export"{% endif %}>
+              {% if it.up is none %}-{% else %}{{ '%.4g' % it.up }}{% if it.up == 0 %} (no price){% endif %}{% endif %}{% if not it.in_export %}*{% endif %}
             </td>
             <td class="num">{{ '%.2f' % it.ca if it.ca else '-' }}{% if not it.in_export %}*{% endif %}</td>
+            <td class="small fw-semibold">{{ it.ref_id or '-' }}</td>
+            <td class="small">{{ it.container_no or '-' }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="17" class="text-center text-muted py-4">暂无明细数据</td></tr>
+          <tr><td colspan="19" class="text-center text-muted py-4">No detail data</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
   <div class="card-footer d-flex justify-content-between align-items-center">
-    <span class="text-muted small">第 {{ page }} / {{ pages }} 页</span>
+    <span class="text-muted small">Page {{ page }} / {{ pages }}</span>
     <div>
       {% if page > 1 %}
-      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&page={{ page - 1 }}">上一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&page={{ page - 1 }}">Previous</a>
       {% endif %}
       {% if page < pages %}
-      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&page={{ page + 1 }}">下一页</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/details?invoice_id={{ invoice_id }}&q={{ q }}&inv_q={{ inv_q }}&page={{ page + 1 }}">Next</a>
       {% endif %}
     </div>
   </div>

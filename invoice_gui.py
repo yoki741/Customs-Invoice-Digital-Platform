@@ -621,7 +621,7 @@ class InvoiceProcessor:
                 # 写入用户输入的集装箱信息
                 if manual_data and manual_data.get('container_info'):
                     lines = manual_data['container_info'].split('\n')
-                    for i, line in enumerate(lines[:3]):
+                    for i, line in enumerate(lines[:4]):
                         ws_inv1[f'A{container_row + 1 + i}'] = line
 
             if 'InputTable' in wb_out.sheetnames:
@@ -958,7 +958,7 @@ class InvoiceProcessor:
                 ws_out['A38'] = 'CONTAINER NO / SEAL NO:'
                 if manual_data and manual_data.get('container_info'):
                     lines = manual_data['container_info'].split('\n')
-                    for i, line in enumerate(lines[:3]):
+                    for i, line in enumerate(lines[:4]):
                         ws_out[f'A{39 + i}'] = line
 
             # 删除模板自带的 InputTable（若有），再逐个复制源文件的 InputTable（含全部格式）

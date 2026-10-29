@@ -47,7 +47,7 @@ class _StaticCacheMiddleware(BaseHTTPMiddleware):
             )
         return response
 
-app = FastAPI(title="報關發票(柬埔寨)數字化管理平台", docs_url=None, redoc_url=None)
+app = FastAPI(title="Customs Invoice (Cambodia) Digital Management Platform", docs_url=None, redoc_url=None)
 app.add_middleware(
     SessionMiddleware,
     secret_key=get_secret_key(),
@@ -83,7 +83,7 @@ async def _permission_denied(request: Request, exc: PermissionDenied) -> Respons
         {
             "user": None,
             "level": "danger",
-            "title": "无权访问",
+            "title": "Access denied",
             "message": exc.message,
             "back": "/",
             "user_id": user_id,
@@ -102,8 +102,8 @@ async def _server_error(request: Request, exc: Exception) -> Response:
         {
             "user": None,
             "level": "danger",
-            "title": "系统出错了",
-            "message": "系统处理请求时发生错误，请稍后重试；如持续出现请联系管理员。",
+            "title": "Something went wrong",
+            "message": "An error occurred while processing the request, please try again later; contact the administrator if it keeps happening.",
             "back": "/",
             "user_id": request.session.get("uid"),
         },
@@ -133,7 +133,7 @@ async def page_not_found(request: Request, path: str) -> Response:
         {
             "user": None,
             "level": "warning",
-            "title": "页面不存在",
+            "title": "Page not found",
             "message": f"/{path}",
             "back": "/",
             "user_id": request.session.get("uid"),
@@ -152,8 +152,8 @@ def seed_admin() -> None:
                     username="admin",
                     password_hash=hash_password("admin123"),
                     role=ROLE_ADMIN,
-                    display_name="系统管理员",
-                    dept="关务",
+                    display_name="System Admin",
+                    dept="Customs",
                 )
                 db.add(admin)
                 db.commit()

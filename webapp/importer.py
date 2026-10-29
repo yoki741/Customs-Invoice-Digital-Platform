@@ -52,10 +52,10 @@ def scan_uploads(db: Session, file_path: Path) -> dict:
     try:
         data = read_source_file(file_path)
     except Exception as exc:
-        raise ValueError(f"解析失败: {exc}") from exc
+        raise ValueError(f"Failed to parse: {exc}") from exc
 
     if not data.invoice_no:
-        raise ValueError("源文件缺少 Invoice No.（InputTable!C5）")
+        raise ValueError("Source file is missing Invoice No. (InputTable!C5)")
 
     existing = (
         db.query(Invoice)
@@ -101,10 +101,10 @@ def import_source_file(
     try:
         data = read_source_file(file_path)
     except Exception as exc:
-        raise ValueError(f"解析失败: {exc}") from exc
+        raise ValueError(f"Failed to parse: {exc}") from exc
 
     if not data.invoice_no:
-        raise ValueError("源文件缺少 Invoice No.（InputTable!C5）")
+        raise ValueError("Source file is missing Invoice No. (InputTable!C5)")
 
     existing = (
         db.query(Invoice).filter(Invoice.invoice_no == data.invoice_no).one_or_none()
@@ -112,7 +112,7 @@ def import_source_file(
     created = existing is None
 
     if existing and not replace:
-        raise ValueError(f"Invoice No. {data.invoice_no} 已存在")
+        raise ValueError(f"Invoice No. {data.invoice_no} already exists")
 
     if existing is not None:
         # 重新导入视为新版本：重置为待核对，强制第二类账号重新核对（闭环）
@@ -150,7 +150,7 @@ def import_source_file(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise ValueError(f"Invoice No. {data.invoice_no} 已存在（并发冲突）") from exc
+        raise ValueError(f"Invoice No. {data.invoice_no} already exists (concurrent conflict)") from exc
     db.refresh(invoice)
     logger.info(
         "导入 {} -> invoice_no={} 明细{}条 ({})",
@@ -203,7 +203,7 @@ def bulk_import(db: Session, files: list[Path], user: Optional[User] = None) -> 
             invoice, created = import_source_file(db, path, user)
             results.append(
                 {"file": path.name, "ok": True, "invoice_no": invoice.invoice_no,
-                 "message": "新建" if created else "替换"}
+                 "message": "New" if created else "Replaced"}
             )
         except Exception as exc:
             db.rollback()

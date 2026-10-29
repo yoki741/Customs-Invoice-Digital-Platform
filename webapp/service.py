@@ -23,6 +23,7 @@ from core.exporter import (
     BuildResult,
     Exporter,
     ManualFields,
+    _split_label,
     add_trace_sheet,
     enable_track_changes,
     parse_unit_prices,
@@ -37,9 +38,13 @@ from core.shipment_list import (
     write_workbook,
 )
 from core.source_reader import SourceData, read_source_file
-from .converters.field_map import editable_cells, validate_form
+from .timefmt import fmt_local
+from .converters.field_map import ALLOWED_KEYS, editable_cells, validate_form
 from .converters.univer_snapshot import workbook_to_snapshot
 from .models import (
+    ROLE_ADMIN,
+    ROLE_TYPE2,
+    ROLE_TYPE3,
     ExportFileVersion,
     ExportJob,
     Invoice,
@@ -65,7 +70,7 @@ def load_sources(invoices: list[Invoice]) -> list[SourceData]:
     for invoice in invoices:
         path = Path(invoice.source_file)
         if not path.exists():
-            raise ValueError(f"源文件不存在: {invoice.source_filename}")
+            raise ValueError(f"Source file not found: {invoice.source_filename}")
         stat = path.stat()
         key = (str(path), stat.st_mtime_ns, stat.st_size)
         cached = _source_cache.get(key)
@@ -97,13 +102,13 @@ def build_for_edit(invoices: list[Invoice]) -> tuple[BuildResult, list[SourceDat
     人工字段整体留空，但单价的手动覆盖值要带进来（预览显示实际生效单价）。
     """
     if not invoices:
-        raise ValueError("没有选中的发票")
+        raise ValueError("No invoice selected")
     sources = load_sources(invoices)
     groups = group_sources(sources)
     if len(groups) > 1:
         names = [g[0].delivery_to or "UNKNOWN" for g in groups]
         raise ValueError(
-            "选中的发票 Delivery to 不一致，无法合并导出："
+            "The selected invoices have different Delivery to values and cannot be merged for export: "
             + " / ".join(names)
         )
     stored = _stored_manual(invoices)
@@ -112,7 +117,7 @@ def build_for_edit(invoices: list[Invoice]) -> tuple[BuildResult, list[SourceDat
         groups[0], ManualFields(unit_prices=parse_unit_prices(stored.get("unit_prices")))
     )
     if not result.ok:
-        raise ValueError("；".join(result.messages) or "构建失败")
+        raise ValueError("; ".join(result.messages) or "Build failed")
     return result, sources
 
 
@@ -356,7 +361,13 @@ def _archive_history(db: Session, folder: str, filename: str, out_path: Path) ->
     hist_dir = HISTORY_DIR / folder
     hist_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(filename).stem
-    dest = hist_dir / f"{stem}.{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsm"
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    dest = hist_dir / f"{stem}.{stamp}.xlsm"
+    # 同一秒内的多次留底不能互相覆盖，重名时追加序号
+    seq = 1
+    while dest.exists():
+        seq += 1
+        dest = hist_dir / f"{stem}.{stamp}_{seq}.xlsm"
     out_path.replace(dest)
     return str(dest)
 
@@ -412,13 +423,13 @@ def export_invoices(
     sources = load_sources(invoices)
     groups = group_sources(sources)
     if len(groups) > 1:
-        raise ValueError("选中的发票 Delivery to 不一致，无法合并导出")
+        raise ValueError("The selected invoices have different Delivery to values and cannot be merged for export")
 
     exporter = get_exporter()
     manual = ManualFields.from_dict(values)
     result = exporter.build(groups[0], manual)
     if not result.ok:
-        raise ValueError("；".join(result.messages) or "构建失败")
+        raise ValueError("; ".join(result.messages) or "Build failed")
 
     # 从清关文件工作簿提取装柜列表行（须在 save_xlsm 关闭工作簿前完成）
     shipment_row = build_row_from_result(
@@ -427,11 +438,19 @@ def export_invoices(
         transport=result.transport,
         customs_weight=result.customs_weight,
     )
+    # 权限分割：第二类账号只编辑报关发票本身，导出附带的装柜补充信息一律忽略
+    if not can_edit_shipment_info(user):
+        shipment = None
     if shipment:
         _apply_shipment_overrides(shipment_row, shipment)
+    # 弹窗手填的 ID 仅存数据库（不进 Excel 行），留空保留原值；
+    # ID 仅第三类账号 / 管理员可写（权限分割）
+    ref_id = str((shipment or {}).get("ref_id") or "").strip()
+    if ref_id and not can_edit_ref_id(user):
+        ref_id = ""
 
     ensure_dirs()
-    folder = _safe(values["bill_no"]) or "未命名"
+    folder = _safe(values["bill_no"]) or "Unnamed"
     final_name = f"{result.file_stem}.xlsm"
     seq = _export_seq(db, folder, final_name)
     out_dir = OUTPUT_DIR / folder
@@ -456,7 +475,7 @@ def export_invoices(
         "JOB_ID": str(job.id),
         "VERSION": str(seq),
         "EXPORTED_BY": user.username if user else "-",
-        "EXPORTED_AT": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "EXPORTED_AT": fmt_local(datetime.utcnow()),
         "FILE_STEM": result.file_stem,
         "INVOICE_IDS": ",".join(str(i.id) for i in invoices),
         "INVOICE_NOS": ",".join(i.invoice_no or "" for i in invoices),
@@ -508,10 +527,11 @@ def export_invoices(
             invoices,
             shipment_row,
             user=user,
+            ref_id=ref_id,
         )
     except Exception as exc:  # pragma: no cover
         logger.exception("生成装柜列表失败")
-        result.messages.append(f"装柜列表生成失败: {exc}")
+        result.messages.append(f"Shipment List generation failed: {exc}")
 
     logger.info(
         "导出 {}（第 {} 次）by {}",
@@ -536,6 +556,19 @@ def export_invoices(
     }
 
 
+def _entry_containers(entry: ShipmentListEntry) -> list[str]:
+    """柜号 1-4 按位还原（中间空格保留，只去掉尾部空位）。"""
+    cells = [
+        (entry.container_1 or "").strip(),
+        (entry.container_2 or "").strip(),
+        (entry.container_3 or "").strip(),
+        (entry.container_4 or "").strip(),
+    ]
+    while cells and not cells[-1]:
+        cells.pop()
+    return cells
+
+
 def _entry_to_row(entry: ShipmentListEntry) -> ShipmentRow:
     """数据库记录还原成装柜列表行。"""
     return ShipmentRow(
@@ -546,16 +579,7 @@ def _entry_to_row(entry: ShipmentListEntry) -> ShipmentRow:
         custom_no=entry.custom_no or "",
         package=entry.package,
         blading=entry.blading or "",
-        containers=[
-            value
-            for value in (
-                entry.container_1,
-                entry.container_2,
-                entry.container_3,
-                entry.container_4,
-            )
-            if value
-        ],
+        containers=_entry_containers(entry),
         nw_kg=float(entry.nw_kg or 0),
         gw_kg=float(entry.gw_kg or 0),
         description=entry.description or "",
@@ -567,6 +591,8 @@ def _entry_to_row(entry: ShipmentListEntry) -> ShipmentRow:
         carrier=entry.carrier or "",
         container_type=entry.container_type or "",
         cbm=entry.cbm,
+        machine_cabinet=entry.machine_cabinet or "",
+        aux_cabinet=entry.aux_cabinet or "",
     )
 
 
@@ -592,12 +618,14 @@ def record_shipment_list(
     row: ShipmentRow,
     *,
     user: Optional[User] = None,
+    ref_id: str = "",
 ) -> dict[str, Any]:
     """导出成功后写入装柜列表并刷新当月 Excel。
 
     以「源文件发票号集合（排序）+ 工厂」（source_key）为业务主键，重复导出同一批
     源数据时更新原行，与手填 Invoice No.（custom_no）无关。装柜列表数据由清关文件
-    （INV1/PKL1）提取，调用前已构建为 row。
+    （INV1/PKL1）提取，调用前已构建为 row。ref_id 为弹窗手填的 ID，仅存数据库
+    不写入 Excel；留空则保留原值。
     """
     month = month_of(row.date)
     payload = row.as_dict()
@@ -617,12 +645,25 @@ def record_shipment_list(
         entry = ShipmentListEntry(custom_no=row.custom_no)
 
     previous_month = entry.month or ""
+    # 手动字段（Package/ETD/ETA/船名/承运人/柜型/CBM/机器柜/辅料柜）留空保留原值，
+    # 与编辑页弹窗「留空保留」语义一致，避免重新导出清空已填写的内容；清空请在
+    # 装柜列表页行内编辑（空值 = 清空）。机器柜/辅料柜只在装柜列表页手填，
+    # 导出行恒为空，这里保证重导出不覆盖页面填写的值。
+    keep_if_blank = {
+        "package", "etd", "eta", "vessel", "carrier", "container_type", "cbm",
+        "machine_cabinet", "aux_cabinet",
+    }
     for key, value in payload.items():
+        blank = value is None or (isinstance(value, str) and not value.strip())
+        if key in keep_if_blank and blank and getattr(entry, key, None):
+            continue
         setattr(entry, key, value)
     entry.source_key = source_key
     entry.month = month
     entry.job_id = job_id
     entry.invoice_ids = json.dumps([i.id for i in invoices])
+    if ref_id:
+        entry.ref_id = ref_id
     entry.created_by = entry.created_by or (user.username if user else None)
     entry.updated_at = datetime.utcnow()
     db.add(entry)
@@ -637,6 +678,427 @@ def record_shipment_list(
         "list_filename": path.name,
         "list_download": f"/api/shipment-list/download?month={month}",
         "list_url": f"/shipments?month={month}",
+    }
+
+
+# ---- Shipment List 行内编辑（三路同步：平台 / .xlsm / 发票明细） ----
+
+
+def can_edit_shipment_info(user: Optional[User]) -> bool:
+    """装柜列表补充信息（导出弹窗字段）仅第一 / 第三类与管理员可写。
+
+    权限分割：第二类账号的编辑权限只覆盖报关发票本身（含重新生成），
+    不得顺带改写装柜列表的手动字段。
+
+    Args:
+        user: 当前用户；None（系统调用）视为允许。
+
+    Returns:
+        是否可写装柜补充信息。
+    """
+    return user is None or user.role != ROLE_TYPE2
+
+
+def can_edit_ref_id(user: Optional[User]) -> bool:
+    """ID（ref_id）字段仅第三类账号与管理员可改（权限分割）。
+
+    Args:
+        user: 当前用户；None（系统调用）视为允许。
+
+    Returns:
+        是否可写 ID 字段。
+    """
+    return user is None or user.role in (ROLE_TYPE3, ROLE_ADMIN)
+
+
+#: 行内编辑可写字段（与 ShipmentListEntry 列名一致）
+ENTRY_EDIT_FIELDS: tuple[str, ...] = (
+    "date", "fty_inv", "shipper", "est_vco", "custom_no", "package", "blading",
+    "container_1", "container_2", "container_3", "container_4",
+    "nw_kg", "gw_kg", "description", "mode", "etd", "eta", "pol",
+    "vessel", "carrier", "container_type", "cbm",
+    "machine_cabinet", "aux_cabinet", "ref_id",
+)
+
+#: 字段显示名（审计日志 / 修改记录共用，与 Shipment List 表头一致）
+ENTRY_FIELD_LABELS: dict[str, str] = {
+    "date": "Date", "fty_inv": "Fty Inv", "shipper": "Shipper", "est_vco": "EST/VCO",
+    "custom_no": "Custom #", "package": "Package", "blading": "Blading",
+    "container_1": "Container 1", "container_2": "Container 2",
+    "container_3": "Container 3", "container_4": "Container 4",
+    "nw_kg": "NW KG", "gw_kg": "GW KG", "description": "DESCRIPTION", "mode": "Mode",
+    "etd": "ETD", "eta": "ETA", "pol": "POL", "vessel": "VESSEL", "carrier": "Carrier",
+    "container_type": "Container Type", "cbm": "CBM",
+    "machine_cabinet": "机器柜", "aux_cabinet": "辅料柜", "ref_id": "ID",
+}
+
+_CONTAINER_FIELDS = ("container_1", "container_2", "container_3", "container_4")
+
+#: 能对应到 .xlsm 单元格的字段（改动时改写报关发票文件并留修改记录）
+_XLSM_FIELDS = frozenset(
+    {"date", "mode", "pol", "package", "gw_kg", "nw_kg", *_CONTAINER_FIELDS}
+)
+
+_SHIP_MODE_TEXT = {"AIR": "by Air", "SEA": "by Sea", "TRUCK": "by Truck"}
+
+
+def _ship_mode_text(mode: str) -> str:
+    """Mode（AIR/SEA/TRUCK）→ .xlsm B17 的船务表述。"""
+    return _SHIP_MODE_TEXT.get((mode or "").upper(), mode or "")
+
+
+def _display(value: Any) -> str:
+    """字段值的展示文本（None 归一成空串，便于比较与日志）。"""
+    return "" if value is None else str(value)
+
+
+def _write_place_cell(cell: Any, value: str) -> None:
+    """保留模板标签前缀改写起运地/装货港单元格（与 exporter 写法一致）。"""
+    prefix, _ = _split_label(cell.value)
+    text = (value or "").strip()
+    if not text:
+        cell.value = None
+    elif prefix.strip() and text.lower().startswith(prefix.strip().lower()):
+        cell.value = text
+    else:
+        cell.value = f"{prefix}{text}"
+
+
+def _redistribute_nw(ws: Any, new_total: float) -> None:
+    """按现值比例重写 INV1 G 列报关重量（尾差补最后一个非零行）。"""
+    total_row = None
+    for r in range(24, 60):
+        c_val = ws[f"C{r}"].value
+        if c_val and "Total" in str(c_val):
+            total_row = r
+            break
+    rows: list[tuple[int, float]] = []
+    for r in range(24, total_row or 60):
+        val = ws[f"G{r}"].value
+        if isinstance(val, (int, float)) and not isinstance(val, bool) and val:
+            rows.append((r, float(val)))
+    if not rows:
+        return
+    old_sum = sum(v for _, v in rows)
+    if old_sum <= 0:
+        return
+    target = round(new_total, 2)
+    scaled: list[tuple[int, float]] = []
+    for r, v in rows[:-1]:
+        scaled.append((r, round(v * target / old_sum, 2)))
+    scaled.append((rows[-1][0], round(target - sum(v for _, v in scaled), 2)))
+    for r, v in scaled:
+        ws[f"G{r}"] = v
+
+
+def _snapshot_pairs(entry: ShipmentListEntry, changes: list[dict[str, Any]]) -> list[tuple[str, Any]]:
+    """行内编辑字段 → 修改记录快照键（沿用导出 form_values 的键名）。"""
+    changed = {c["key"] for c in changes}
+    pairs: list[tuple[str, Any]] = []
+    if "date" in changed:
+        pairs.append(("date", entry.date or ""))
+    if "mode" in changed:
+        pairs.append(("ship_mode", _ship_mode_text(entry.mode)))
+    if "pol" in changed:
+        key = "port_loading" if (entry.mode or "").upper() == "TRUCK" else "place_receipt"
+        pairs.append((key, entry.pol or ""))
+    if changed & set(_CONTAINER_FIELDS):
+        pairs.append(("container_info", "\n".join(_entry_containers(entry))))
+    simple = {
+        "package", "nw_kg", "gw_kg", "etd", "eta", "vessel", "carrier",
+        "container_type", "cbm", "fty_inv", "shipper", "est_vco",
+        "custom_no", "blading", "description", "ref_id",
+    }
+    for key in simple & changed:
+        value = getattr(entry, key)
+        pairs.append((key, "" if value is None else value))
+    return pairs
+
+
+def _merged_snapshot(
+    db: Session,
+    folder: str,
+    filename: str,
+    entry: ShipmentListEntry,
+    changes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """在上一份 form_values 快照上合并本次变更，供修改记录展示。
+
+    ``_changes`` 直接记录精确的字段 old→new（时间线优先用它，避免跨记录
+    快照 diff 的噪音）；其余键沿用导出快照键名，完整字段一栏展示现值。
+    """
+    prev = (
+        db.query(ExportFileVersion)
+        .filter(
+            ExportFileVersion.folder == folder,
+            ExportFileVersion.filename == filename,
+            ExportFileVersion.form_values.notin_(("", "{}")),
+        )
+        .order_by(ExportFileVersion.id.desc())
+        .first()
+    )
+    snapshot: dict[str, Any] = {}
+    if prev is not None:
+        try:
+            loaded = json.loads(prev.form_values or "{}")
+            if isinstance(loaded, dict):
+                snapshot = loaded
+        except (TypeError, ValueError):
+            snapshot = {}
+    for key, value in _snapshot_pairs(entry, changes):
+        snapshot[key] = value
+    snapshot["_changes"] = changes
+    return snapshot
+
+
+def _sync_container_manual_values(
+    db: Session, entry: ShipmentListEntry, user: Optional[User] = None
+) -> None:
+    """柜号改动写回发票 manual_values["container_info"]（明细页 Container No. 即时一致）。"""
+    try:
+        ids = [int(x) for x in json.loads(entry.invoice_ids or "[]")]
+    except (TypeError, ValueError):
+        return
+    if not ids:
+        return
+    joined = "\n".join(_entry_containers(entry))
+    now = datetime.utcnow()
+    for invoice in db.query(Invoice).filter(Invoice.id.in_(ids)).all():
+        try:
+            data = json.loads(invoice.manual_values or "{}")
+        except (TypeError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data["container_info"] = joined
+        invoice.manual_values = json.dumps(data, ensure_ascii=False)
+        if user is not None:
+            invoice.manual_saved_by = user.username
+            invoice.manual_saved_at = now
+    db.commit()
+
+
+def sync_entry_to_xlsm(
+    db: Session,
+    entry: ShipmentListEntry,
+    changes: list[dict[str, Any]],
+    user: Optional[User] = None,
+) -> dict[str, Any]:
+    """把 Shipment List 行内编辑改写回报关发票 .xlsm 并留修改记录。
+
+    仅处理能对应到单元格的字段（Date/Mode/POL/柜号/Package/GW/NW）；改写前把
+    旧文件移入 file_history 留底，改写后按新文件内容补一条 kind="save" 记录
+    （带 sha256、留底下载与字段变更），挂到该文件的修改记录时间线上。
+
+    Args:
+        db: 数据库会话。
+        entry: 已落库的装柜列表行。
+        changes: 字段级变更（{key, label, old, new}）。
+        user: 操作人。
+
+    Returns:
+        {"synced": 是否改写了文件, "message": 提示信息}
+    """
+    hit = [c for c in changes if c["key"] in _XLSM_FIELDS]
+    if not hit:
+        return {"synced": False, "message": ""}
+
+    job = db.get(ExportJob, entry.job_id) if entry.job_id else None
+    folder = name = ""
+    if job and job.filename:
+        folder, _, name = job.filename.partition("/")
+    out_path = OUTPUT_DIR / folder / name if name else None
+    if out_path is None or not out_path.is_file():
+        return {"synced": False, "message": "Customs invoice file not found, platform data updated only"}
+
+    import openpyxl
+    from openpyxl.cell.cell import MergedCell
+
+    changed = {c["key"] for c in hit}
+    wb = openpyxl.load_workbook(str(out_path), keep_vba=True)
+    try:
+        ws = wb["INV1"]
+        if "date" in changed:
+            ws["J9"] = entry.date
+        if "mode" in changed:
+            ws["B17"] = _ship_mode_text(entry.mode)
+        if "pol" in changed:
+            if (entry.mode or "").upper() == "TRUCK":
+                # 陆运 POL 来自装货港 A19，写回时保留 "Port of loading:" 标签
+                cell = ws["A19"]
+                value = (entry.pol or "").strip()
+                if not value:
+                    cell.value = None
+                elif value.lower().startswith("port of loading:"):
+                    cell.value = value
+                else:
+                    cell.value = f"Port of loading: {value}"
+            else:
+                _write_place_cell(ws["A18"], entry.pol or "")
+        if changed & set(_CONTAINER_FIELDS):
+            container_row = None
+            for r in range(24, 60):
+                a_val = ws[f"A{r}"].value
+                if a_val and "CONTAINER" in str(a_val).upper():
+                    container_row = r
+                    break
+            if container_row is not None:
+                for r in range(container_row + 1, container_row + 10):
+                    for col in ("A", "B"):
+                        cell = ws[f"{col}{r}"]
+                        if not isinstance(cell, MergedCell):
+                            cell.value = None
+                for i, line in enumerate(_entry_containers(entry)[:4]):
+                    ws[f"A{container_row + 1 + i}"] = line
+        if "PKL1" in wb.sheetnames:
+            ws_pkl = wb["PKL1"]
+            if "package" in changed:
+                ws_pkl["A24"] = entry.package
+            if "gw_kg" in changed:
+                ws_pkl["K24"] = float(entry.gw_kg or 0)
+        if "nw_kg" in changed:
+            _redistribute_nw(ws, float(entry.nw_kg or 0))
+
+        backup = _archive_history(db, folder, name, out_path)
+        wb.save(str(out_path))
+    finally:
+        wb.close()
+
+    sha = _sha256(out_path)
+    snapshot = _merged_snapshot(db, folder, name, entry, changes)
+    db.add(
+        ExportFileVersion(
+            job_id=entry.job_id,
+            kind="save",
+            version=0,
+            folder=folder,
+            filename=name,
+            file_path=str(out_path),
+            sha256=sha,
+            invoice_ids=entry.invoice_ids or "[]",
+            form_values=json.dumps(snapshot, ensure_ascii=False),
+            backup_path=backup,
+            created_by=user.username if user else None,
+        )
+    )
+    db.commit()
+    logger.info(
+        "报关发票已同步改写: {}/{} by {}", folder, name, user.username if user else "-"
+    )
+    return {"synced": True, "message": ""}
+
+
+def update_shipment_entry(
+    db: Session,
+    entry: ShipmentListEntry,
+    payload: dict[str, Any],
+    user: Optional[User] = None,
+) -> dict[str, Any]:
+    """Shipment List 行内编辑保存：全量落库并同步 .xlsm / 发票明细。
+
+    空值 = 清空（所见即所得）；ETA 留空且 ETD 有值时按运输方式自动推算。
+    月度 Excel 每次保存后按库内最新数据重建（date 变更导致月份变化时旧、
+    新两个月都重建）；柜号变动同步写回
+    发票 manual_values；可映射字段变动改写报关发票文件并留修改记录（见
+    :func:`sync_entry_to_xlsm`）。source_key 身份键保持不变。
+
+    Args:
+        db: 数据库会话。
+        entry: 目标装柜列表行（已落库）。
+        payload: 全量字段值（缺键视为空）。
+        user: 操作人。
+
+    Returns:
+        {"ok", "message", "xlsm_synced", "changes", "updated_at"}
+
+    Raises:
+        ValueError: 数字字段无法解析。
+    """
+    previous_month = entry.month or ""
+    old_values: dict[str, Any] = {f: getattr(entry, f) for f in ENTRY_EDIT_FIELDS}
+
+    # 权限分割：ID 仅第三类账号 / 管理员可改，其他人提交的值一律按原值回填
+    if not can_edit_ref_id(user):
+        payload = {**payload, "ref_id": entry.ref_id or ""}
+
+    for field in ENTRY_EDIT_FIELDS:
+        raw = payload.get(field)
+        text = "" if raw is None else str(raw).strip()
+        if field in ("date", "etd", "eta"):
+            parsed = parse_date(text)
+            setattr(entry, field, parsed.isoformat() if parsed else "")
+        elif field in ("package", "cbm"):
+            if text:
+                try:
+                    setattr(entry, field, float(text))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"{ENTRY_FIELD_LABELS.get(field, field)} must be a number"
+                    ) from exc
+            else:
+                setattr(entry, field, None)
+        elif field in ("nw_kg", "gw_kg"):
+            try:
+                setattr(entry, field, float(text) if text else 0.0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{ENTRY_FIELD_LABELS.get(field, field)} must be a number"
+                ) from exc
+        else:
+            setattr(entry, field, text)
+
+    # 只填了 ETD 没填 ETA 时，按运输方式自动推算（与导出弹窗一致）
+    if not entry.eta and entry.etd:
+        derived = eta_for(entry.mode, parse_date(entry.etd))
+        entry.eta = derived.isoformat() if derived else ""
+
+    entry.month = month_of(parse_date(entry.date))
+    entry.updated_at = datetime.utcnow()
+    db.commit()
+
+    changes: list[dict[str, Any]] = []
+    for field in ENTRY_EDIT_FIELDS:
+        old_text = _display(old_values[field])
+        new_text = _display(getattr(entry, field))
+        if old_text != new_text:
+            changes.append(
+                {
+                    "key": field,
+                    "label": ENTRY_FIELD_LABELS.get(field, field),
+                    "old": old_text,
+                    "new": new_text,
+                }
+            )
+
+    # 月度 Excel 每次保存后按库内最新数据重建；date 改到别的月份时新旧两份都重建
+    if entry.month:
+        rebuild_shipment_month(db, entry.month)
+    if previous_month and previous_month != entry.month:
+        rebuild_shipment_month(db, previous_month)
+
+    if any(c["key"] in _CONTAINER_FIELDS for c in changes):
+        _sync_container_manual_values(db, entry, user)
+
+    xlsm = sync_entry_to_xlsm(db, entry, changes, user)
+    if xlsm["synced"]:
+        message = "Saved, customs invoice file synced"
+    elif xlsm["message"]:
+        message = f"Saved ({xlsm['message']})"
+    else:
+        message = "Saved"
+
+    logger.info(
+        "装柜列表行内编辑 #{} by {}: {}",
+        entry.id,
+        user.username if user else "-",
+        "；".join(f"{c['label']} {c['old']}→{c['new']}" for c in changes) or "无变更",
+    )
+    return {
+        "ok": True,
+        "message": message,
+        "xlsm_synced": xlsm["synced"],
+        "changes": changes,
+        "updated_at": fmt_local(entry.updated_at),
     }
 
 
@@ -690,6 +1152,142 @@ def record_manual_save(
         )
     )
     db.commit()
+
+
+def batch_generations(
+    db: Session, invoices: list[Invoice]
+) -> list[ExportFileVersion]:
+    """返回该批发票的报关单生成记录（第 1..N 次生成，按生成先后排序）。
+
+    以 invoice_ids 集合完全一致视为同一批（合并导出共享同一组发票）。
+
+    Args:
+        db: 数据库会话。
+        invoices: 本批发票。
+
+    Returns:
+        kind="export" 的版本记录列表。
+    """
+    wanted = {invoice.id for invoice in invoices}
+    if not wanted:
+        return []
+    rows = (
+        db.query(ExportFileVersion)
+        .filter(ExportFileVersion.kind == "export")
+        .order_by(ExportFileVersion.id.asc())
+        .all()
+    )
+    matched: list[ExportFileVersion] = []
+    for row in rows:
+        try:
+            ids = {int(x) for x in json.loads(row.invoice_ids or "[]")}
+        except (TypeError, ValueError):
+            continue
+        if ids == wanted:
+            matched.append(row)
+    return matched
+
+
+def first_generation_ids(db: Session, folder: str, name: str) -> str:
+    """报关发票文件第一次生成时的发票 id 串（如 "1,2"），无生成记录返回 ""。
+
+    装柜列表「报关发票」编辑入口用它还原第一次生成该文件时的发票组合，
+    保证进入的编辑页与首次生成一致（后续生成可能换了发票组合）。
+
+    Args:
+        db: 数据库会话。
+        folder: 输出子目录（bill_no）。
+        name: 文件名。
+
+    Returns:
+        逗号连接的发票 id；无匹配记录返回空串。
+    """
+    if not name:
+        return ""
+    row = (
+        db.query(ExportFileVersion)
+        .filter(
+            ExportFileVersion.kind == "export",
+            ExportFileVersion.folder == folder,
+            ExportFileVersion.filename == name,
+        )
+        .order_by(ExportFileVersion.id.asc())
+        .first()
+    )
+    if row is None:
+        return ""
+    try:
+        ids = [int(x) for x in json.loads(row.invoice_ids or "[]")]
+    except (TypeError, ValueError):
+        return ""
+    return ",".join(str(i) for i in ids)
+
+
+def reset_manual_state(
+    db: Session,
+    invoices: list[Invoice],
+    user: Optional[User] = None,
+    *,
+    apply: bool = True,
+) -> dict[str, Any]:
+    """一键重置编辑页填写内容（人工字段 / 单价覆盖）。
+
+    按生成版本回退一步：一次生成的报关单（只生成过一次或尚未生成）
+    清空全部填写内容；旧版报关单（生成过多次）恢复成上个版本
+    （第 N-1 次生成）保存的 form_values。
+
+    Args:
+        db: 数据库会话。
+        invoices: 本批发票。
+        user: 操作人（写入保存人 / 修改留痕）。
+        apply: False 时只返回重置计划供前端确认，不落库。
+
+    Returns:
+        {"mode": "clear"/"restore", "target_version", "latest_version",
+        "generations", "values", "message"}。
+    """
+    generations = batch_generations(db, invoices)
+    latest = generations[-1] if generations else None
+    target = generations[-2] if len(generations) >= 2 else None
+
+    values = {key: "" for key in sorted(ALLOWED_KEYS)}
+    if target is not None:
+        try:
+            raw = json.loads(target.form_values or "{}")
+        except (TypeError, ValueError):
+            raw = {}
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                if str(key).startswith("_") or key not in ALLOWED_KEYS:
+                    continue
+                values[str(key)] = "" if value is None else str(value).strip()
+        mode = "restore"
+        message = (
+            f"Restored the manually filled content to generation #{target.version}"
+            f" (the version before the current #{latest.version})"
+        )
+    else:
+        mode = "clear"
+        message = (
+            "Cleared all manually filled content"
+            + (
+                " (this declaration has only been generated once, no older version to restore)"
+                if latest is not None
+                else " (this declaration has not been generated yet)"
+            )
+        )
+
+    if apply:
+        save_manual_values(db, invoices, values, user)
+        record_manual_save(db, invoices, values, user)
+    return {
+        "mode": mode,
+        "target_version": target.version if target is not None else None,
+        "latest_version": latest.version if latest is not None else None,
+        "generations": len(generations),
+        "values": values,
+        "message": message,
+    }
 
 
 def export_map_for(
@@ -757,12 +1355,35 @@ def company_for_price(invoice: Invoice) -> str:
     return "Eastex"
 
 
-def attach_detail_extras(rows: list) -> None:
+def shipment_ref_map(db: Session) -> dict[int, str]:
+    """发票 id → 装柜列表 ref_id（第二类账号明细页反查，最新一条优先）。"""
+    mapping: dict[int, str] = {}
+    entries = (
+        db.query(ShipmentListEntry)
+        .order_by(ShipmentListEntry.id.desc())
+        .all()
+    )
+    for entry in entries:
+        if not entry.ref_id:
+            continue
+        try:
+            ids = [int(i) for i in json.loads(entry.invoice_ids or "[]")]
+        except (TypeError, ValueError):
+            continue
+        for i in ids:
+            mapping.setdefault(i, entry.ref_id)
+    return mapping
+
+
+def attach_detail_extras(
+    rows: list, ref_map: Optional[dict[int, str]] = None
+) -> None:
     """给明细行附加导出口径数据（供明细页展示）。
 
     附加属性：
         export_bill_no  提单号
         container_no    集装箱柜号
+        ref_id          所属装柜手动填写的 ID
         cw              报关净重 = 净重 × 运输比例
         up              单价（价格表查询；None=无面料类型，0.0=未查到）
         ca              报关金额 = cw × up
@@ -771,10 +1392,12 @@ def attach_detail_extras(rows: list) -> None:
     from core.price_table import lookup_price, weight_ratio
     from core.source_reader import EXPORT_FIRST_ROW, EXPORT_LAST_ROW
 
+    ref_map = ref_map or {}
     exporter = get_exporter()
     for item in rows:
         item.export_bill_no = "-"
         item.container_no = ""
+        item.ref_id = ""
         item.cw = None
         item.up = None
         item.ca = None
@@ -782,6 +1405,7 @@ def attach_detail_extras(rows: list) -> None:
         invoice = item.invoice
         if invoice is None:
             continue
+        item.ref_id = ref_map.get(invoice.id, "")
         ratio = weight_ratio(invoice.ship_mode)
         item.export_bill_no = export_bill_no(invoice)
         item.container_no = export_container(invoice)

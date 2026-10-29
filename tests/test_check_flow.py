@@ -80,13 +80,13 @@ def main() -> None:
 
     # 客户名模糊搜索多命中：不自动选中，下拉只显示匹配项
     r = c.get("/details?inv_q=EASTEX")
-    check("全部发票" in r.text, "多命中时不自动选中")
+    check("All Invoices" in r.text, "多命中时不自动选中")
     check("EASTEX GARMENT" in r.text and "DAKOTA" not in r.text.split("<select")[1].split("</select>")[0],
           "下拉只含匹配客户的发票")
 
     # 无匹配
     r = c.get("/details?inv_q=NOTEXIST999")
-    check("没有匹配" in r.text, "无匹配时显示提示")
+    check("No invoice matches" in r.text, "无匹配时显示提示")
     c.close()
 
     # --- type1 视角 ---

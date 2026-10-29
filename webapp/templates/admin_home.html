@@ -1,13 +1,15 @@
 {% extends "base.html" %}
-{% block title %}管理后台 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}管理后台{% endblock %}
-{% block crumb %}总览{% endblock %}
+{% block title %}Admin Dashboard - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Admin Dashboard{% endblock %}
+{% block crumb %}Overview{% endblock %}
 {% block topbar_actions %}
-<a class="btn btn-sm btn-primary" href="/admin/upload">上传 .xlsm 导入</a>
-<a class="btn btn-sm btn-outline-primary" href="/admin/users">账号管理</a>
-<a class="btn btn-sm btn-outline-primary" href="/admin/exports">导出历史</a>
-<a class="btn btn-sm btn-outline-secondary" href="/invoices">发票列表</a>
-<a class="btn btn-sm btn-outline-secondary" href="/details">发票明细</a>
+<a class="btn btn-sm btn-primary" href="/invoices">Upload &amp; Import .xlsm</a>
+<a class="btn btn-sm btn-outline-primary" href="/admin/users">Accounts</a>
+<a class="btn btn-sm btn-outline-primary" href="/admin/exports">Export History</a>
+<button type="button" class="btn btn-sm btn-outline-primary"
+        onclick="openVerify()">Verify File Integrity</button>
+<a class="btn btn-sm btn-outline-secondary" href="/invoices">Invoice List</a>
+<a class="btn btn-sm btn-outline-secondary" href="/details">Invoice Details</a>
 {% endblock %}
 {% block content %}
 
@@ -22,31 +24,31 @@
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico blue">▤</div>
-      <div><div class="val">{{ stats.invoices }}</div><div class="lbl">发票记录</div></div>
+      <div><div class="val">{{ stats.invoices }}</div><div class="lbl">Invoice Records</div></div>
     </div>
   </div>
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico green">☺</div>
-      <div><div class="val">{{ stats.active_users }} / {{ stats.users }}</div><div class="lbl">启用 / 全部账号</div></div>
+      <div><div class="val">{{ stats.active_users }} / {{ stats.users }}</div><div class="lbl">Active / Total Accounts</div></div>
     </div>
   </div>
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico amber">↓</div>
-      <div><div class="val">{{ stats.exports }}</div><div class="lbl">成功导出</div></div>
+      <div><div class="val">{{ stats.exports }}</div><div class="lbl">Successful Exports</div></div>
     </div>
   </div>
   <div class="col-6 col-md-3">
     <div class="stat">
       <div class="ico red">!</div>
-      <div><div class="val">{{ stats.failed }}</div><div class="lbl">失败导出</div></div>
+      <div><div class="val">{{ stats.failed }}</div><div class="lbl">Failed Exports</div></div>
     </div>
   </div>
 </div>
 
 <div class="card">
-  <div class="card-header">最近导入</div>
+  <div class="card-header">Recent Imports</div>
   <div class="list-group list-group-flush">
     {% for i in recent %}
     <div class="list-group-item d-flex justify-content-between align-items-center" style="border-color:var(--border)">
@@ -56,12 +58,179 @@
       </div>
       <div class="text-end small">
         <div>{{ i.uploaded_by or '-' }}</div>
-        <div class="text-muted">{{ i.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div class="text-muted">{{ i.uploaded_at|localtime('%Y-%m-%d %H:%M') }}</div>
       </div>
     </div>
     {% else %}
-    <div class="list-group-item text-muted">还没有导入任何发票</div>
+    <div class="list-group-item text-muted">No invoices imported yet</div>
     {% endfor %}
   </div>
 </div>
+
+<div class="modal fade" id="verify-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <span class="fw-semibold small">Verify whether a file was modified locally</span>
+        <button type="button" class="btn-close ms-auto" onclick="closeVerify()"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">
+          Upload a downloaded customs invoice .xlsm and the platform computes its SHA256
+          fingerprint and compares it with the export records: an exact match means it has
+          not been touched; a mismatch means the file was modified or re-saved after export.
+        </p>
+        <input type="file" id="verify-file" class="form-control form-control-sm"
+               accept=".xlsm">
+        <div id="verify-result" class="mt-3"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-primary btn-sm" id="verify-btn" onclick="doVerify()">Start Verification</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let verifyModal = null;
+function openVerify() {
+  if (!verifyModal) {
+    verifyModal = new bootstrap.Modal(document.getElementById('verify-modal'));
+  }
+  document.getElementById('verify-file').value = '';
+  document.getElementById('verify-result').innerHTML = '';
+  verifyModal.show();
+}
+function closeVerify() {
+  if (verifyModal) verifyModal.hide();
+}
+async function doVerify() {
+  const input = document.getElementById('verify-file');
+  const box = document.getElementById('verify-result');
+  const btn = document.getElementById('verify-btn');
+  if (!input.files.length) {
+    box.innerHTML = '<div class="text-danger small">Please choose a .xlsm file first</div>';
+    return;
+  }
+  box.innerHTML = '<div class="text-muted small">Verifying...</div>';
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  try {
+    const res = await fetch('/api/files/verify', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!data.ok) {
+      box.innerHTML = '<div class="text-danger small">' + (data.error || 'Verification failed') + '</div>';
+    } else {
+      renderVerifyResult(data);
+    }
+  } catch (err) {
+    box.innerHTML = '<div class="text-danger small">Request failed: ' + err + '</div>';
+  } finally {
+    // 校验跑过一次后，按钮改为「重新校验」
+    btn.textContent = 'Verify Again';
+  }
+}
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function multiline(v) {
+  return esc(v).replace(/\n/g, '<br>');
+}
+
+function fmtUtc(s) {
+  // "2026-10-28T03:15:47Z" → 北京时间 "2026-10-28 11:15:47"
+  if (!s) return '';
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return s;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  d.setTime(d.getTime() + 8 * 3600 * 1000); // UTC → 北京时间
+  const p = n => String(n).padStart(2, '0');
+  return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) +
+         ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds());
+}
+
+function renderVerifyResult(data) {
+  const box = document.getElementById('verify-result');
+  if (data.matched) {
+    box.innerHTML =
+      '<div class="alert alert-success py-2 small mb-1">' + esc(data.message) + '</div>' +
+      '<div class="small text-muted">SHA256: ' + esc(data.sha) + '</div>';
+    return;
+  }
+  let html =
+    '<div class="alert alert-danger py-2 small mb-1">' + esc(data.message) + '</div>' +
+    '<div class="small text-muted mb-2">SHA256: ' + esc(data.sha) + '</div>';
+
+  // 修改人 / 修改时间卡片（Excel 保存时自动记录，醒目展示）
+  const up = data.uploaded_props || {};
+  const op = data.original_props || {};
+  if (up.modified || up.last_modified_by) {
+    html += '<div class="border border-danger rounded p-2 mb-2 bg-light">' +
+      '<div class="fw-semibold mb-1">📌 Modified By &amp; Modified At</div>' +
+      '<table class="table table-sm table-borderless mb-0 small">' +
+      '<tr><td class="text-muted" style="width:90px">Modified By</td>' +
+      '<td><b>' + esc(up.last_modified_by || 'Unknown') + '</b>' +
+      ' <span class="text-muted">(the computer account recorded automatically when Excel saved the file)</span></td></tr>' +
+      '<tr><td class="text-muted">Modified At</td>' +
+      '<td><b>' + esc(fmtUtc(up.modified) || 'Unknown') + '</b>' +
+      ' <span class="text-muted">(China time, i.e. the last save time)</span></td></tr>' +
+      (op.modified ?
+        '<tr><td class="text-muted">Platform Original</td>' +
+        '<td class="text-muted">saved by ' + esc(op.last_modified_by || '-') +
+        ' at ' + esc(fmtUtc(op.modified)) + '</td></tr>' : '') +
+      '</table></div>';
+  }
+
+  if (data.diff_error) {
+    html += '<div class="small text-muted">' + esc(data.diff_error) + '</div>';
+  } else if (data.diff && data.diff.length) {
+    if (data.source) {
+      html += '<div class="small fw-semibold mb-1">Matched original file: ' +
+        esc(data.source.folder) + '/' + esc(data.source.filename) +
+        ' · generation #' + (data.source.version || '-') + ' · exported by ' +
+        esc(data.source.exported_by || '-') + '</div>';
+    }
+    if (data.trace_missing) {
+      html += '<div class="small text-warning mb-1">⚠ The embedded trace sheet of this file has been deleted or tampered with (highly suspicious).</div>';
+    }
+    html += '<div class="small text-muted mb-1">' + data.diff_count +
+      ' change(s) found' + (data.diff_count > data.diff.length ? ' (showing first ' + data.diff.length + ')' : '') + ':</div>';
+
+    const bySheet = {};
+    data.diff.forEach(d => {
+      (bySheet[d.sheet] = bySheet[d.sheet] || []).push(d);
+    });
+    html += '<div style="max-height:320px;overflow-y:auto">';
+    Object.keys(bySheet).forEach(sheet => {
+      html += '<div class="fw-semibold small mt-2">Sheet: ' + esc(sheet) + '</div>';
+      html += '<table class="table table-sm table-bordered mb-0 small">' +
+        '<thead><tr><th style="width:70px">Cell</th><th>Original</th><th>Current</th></tr></thead><tbody>';
+      bySheet[sheet].forEach(d => {
+        const o = d.original == null
+          ? '<span class="text-muted">(empty)</span>' : multiline(d.original);
+        const m = d.modified == null
+          ? '<span class="text-muted">(empty)</span>' : multiline(d.modified);
+        html += '<tr><td>' + esc(d.cell) + '</td>' +
+          '<td class="text-muted text-decoration-line-through">' + o + '</td>' +
+          '<td><b>' + m + '</b></td></tr>';
+      });
+      html += '</tbody></table>';
+    });
+    html += '</div>';
+  } else if (data.source) {
+    html += '<div class="small text-muted">Matched original file ' +
+      esc(data.source.folder) + '/' + esc(data.source.filename) +
+      '; visible cell contents are identical - differences may come from macros or metadata in invisible areas.</div>';
+  } else {
+    html += '<div class="small text-muted">Could not locate the matching original export file; cell-by-cell comparison is unavailable.</div>';
+  }
+  box.innerHTML = html;
+}
+</script>
 {% endblock %}

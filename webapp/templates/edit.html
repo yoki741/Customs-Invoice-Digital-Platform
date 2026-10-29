@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}编辑 / 导出 - 報關發票(柬埔寨)數字化管理平台{% endblock %}
-{% block heading %}编辑 / 导出{% endblock %}
+{% block title %}Edit / Export - Customs Invoice (Cambodia) Digital Management Platform{% endblock %}
+{% block heading %}Edit / Export{% endblock %}
 {% block crumb %}
 {% for i in invoices %}<span class="badge badge-role">{{ i.invoice_no }}</span> {% endfor %}
 <span id="status" class="small text-muted ms-2"></span>
@@ -34,31 +34,35 @@
 
 {% block content %}
 <div class="d-flex align-items-center gap-2 mb-2 no-print">
-  <a class="btn btn-sm btn-outline-secondary" href="{{ back_link }}">← 返回列表</a>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ back_link }}">← Back to List</a>
   <span class="badge badge-info">{{ first.ship_mode or '-' }}</span>
   <span class="badge badge-role">{{ first.delivery_to or '-' }}</span>
-  {% if invoices|length > 1 %}<span class="badge badge-ok">合并 {{ invoices|length }} 张</span>{% endif %}
+  {% if invoices|length > 1 %}<span class="badge badge-ok">Merged {{ invoices|length }} invoices</span>{% endif %}
 </div>
 
 <div class="row g-3">
   <div class="col-12 col-xl-4 no-print edit-col-left">
     <div class="card">
-      <div class="card-header py-2 fw-semibold">人工填写字段（EXE 中需要手动输入的信息）</div>
+      <div class="card-header py-2 fw-semibold">Manual Fields (information to be typed in manually)</div>
       <div class="card-body">
         <div id="price-warning" class="alert alert-warning py-2 small mb-2 d-none"></div>
         <div id="form-fields" class="row g-2"></div>
         <div class="alert alert-info py-2 small mt-2 mb-0">
-          右侧 Excel 中黄色单元格即为需要填写的位置；填写后可点「保存」按钮
-          或按 <b>Ctrl+S</b> 保存（下次打开自动回填）。点击「生成 .xlsm」时
-          也会同步保存，并按模板生成报关发票 + 装箱单（含 VBA），与 EXE 输出一致。
+          Yellow cells in the Excel sheet on the right are the ones to fill in.
+          Your edits are <b>autosaved</b> as soon as you leave a cell or field
+          (or press <b>Ctrl+S</b> to save immediately; values are restored next time).
+          Click "Generate .xlsm" to build the customs invoice + packing list (with VBA)
+          from the template, same as the EXE output; afterwards a dialog pops up for
+          the extra Shipment List information to be entered manually.
         </div>
       </div>
       <div class="card-footer d-flex gap-2">
-        <button class="btn btn-outline-primary" id="btn-save" onclick="saveManual()">
-          保存
+        <button class="btn btn-outline-danger" id="btn-reset" onclick="doReset()"
+                title="First-time generation: clear all filled content. Older versions: restore the previous version's content.">
+          Reset
         </button>
         <button class="btn btn-success flex-grow-1" id="btn-export" onclick="doExport()">
-          生成 .xlsm
+          Generate .xlsm
         </button>
       </div>
       <div class="card-footer d-none" id="save-result">
@@ -68,19 +72,19 @@
     </div>
 
     <div class="card mt-3" id="meta-card">
-      <div class="card-header py-2 fw-semibold">自动计算（不可编辑）</div>
+      <div class="card-header py-2 fw-semibold">Auto-calculated (read-only)</div>
       <div class="card-body small">
         <div class="row g-2">
-          <div class="col-6"><span class="text-muted">运输方式</span><div id="m-transport">-</div></div>
-          <div class="col-6"><span class="text-muted">单价公司</span><div id="m-company">-</div></div>
-          <div class="col-6"><span class="text-muted">报关重量</span><div id="m-weight">-</div></div>
-          <div class="col-6"><span class="text-muted">总金额</span><div id="m-amount">-</div></div>
-          <div class="col-12"><span class="text-muted">输出文件名</span><div id="m-file" class="text-break">-</div></div>
-          <div class="col-12"><span class="text-muted">源文件</span>
+          <div class="col-6"><span class="text-muted">Ship Mode</span><div id="m-transport">-</div></div>
+          <div class="col-6"><span class="text-muted">Price Company</span><div id="m-company">-</div></div>
+          <div class="col-6"><span class="text-muted">Customs Weight</span><div id="m-weight">-</div></div>
+          <div class="col-6"><span class="text-muted">Total Amount</span><div id="m-amount">-</div></div>
+          <div class="col-12"><span class="text-muted">Output Filename</span><div id="m-file" class="text-break">-</div></div>
+          <div class="col-12"><span class="text-muted">Source File</span>
             <div id="m-source" class="text-break text-muted">-</div></div>
-          <div class="col-12"><span class="text-muted">最近保存</span>
+          <div class="col-12"><span class="text-muted">Last Saved</span>
             <div id="m-saved" class="text-break text-muted">-</div></div>
-          <div class="col-12"><span class="text-muted">单价（自动读取价格表，与表格 I 列一致）</span>
+          <div class="col-12"><span class="text-muted">Unit Prices (auto-loaded from the price list, same as column I)</span>
             <span class="ico-q ms-1" id="price-help" style="cursor:help">i</span>
             <div id="m-prices" class="small mt-1">-</div></div>
         </div>
@@ -91,12 +95,12 @@
   <div class="col-12 col-xl-8 edit-col-right">
     <div class="card">
       <div class="card-header py-2 d-flex align-items-center gap-2">
-        <span class="fw-semibold">Excel 预览</span>
+        <span class="fw-semibold">Excel Preview</span>
         <div class="btn-group btn-group-sm">
-          <button class="btn btn-outline-primary" onclick="InvoiceGrid.showSheet('INV1')">INV1 发票</button>
-          <button class="btn btn-outline-primary" onclick="InvoiceGrid.showSheet('PKL1')">PKL1 装箱单</button>
+          <button class="btn btn-outline-primary" onclick="InvoiceGrid.showSheet('INV1')">INV1 Invoice</button>
+          <button class="btn btn-outline-primary" onclick="InvoiceGrid.showSheet('PKL1')">PKL1 Packing List</button>
         </div>
-        <span class="ms-auto small text-muted">模板：INV1 + PKL1</span>
+        <span class="ms-auto small text-muted">Template: INV1 + PKL1</span>
       </div>
       <div class="card-body p-1">
         <div id="grid"></div>
@@ -105,52 +109,63 @@
   </div>
 </div>
 
-<!-- 装柜列表补充信息弹窗（导出时弹出，可暂不填） -->
+<!-- Shipment List extra info modal (opened automatically after "Generate .xlsm") -->
 <div class="modal fade" id="shipment-modal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header py-2">
-        <h5 class="modal-title">装柜列表补充信息（可暂不填）</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+        <h5 class="modal-title">Shipment List Extra Info</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="row g-2">
+          {% if user.role in [ROLE_TYPE3, ROLE_ADMIN] %}
           <div class="col-6">
-            <label class="form-label small mb-1">Package 件数</label>
+            <label class="form-label small mb-1">ID</label>
+            <input type="text" class="form-control form-control-sm" id="sm-ref-id" placeholder="Fill ID">
+          </div>
+          {% endif %}
+          <div class="col-6">
+            <label class="form-label small mb-1">Package</label>
             <input type="number" step="any" min="0" class="form-control form-control-sm" id="sm-package">
           </div>
           <div class="col-6">
-            <label class="form-label small mb-1">VESSEL 船名 / 航班</label>
-            <input type="text" class="form-control form-control-sm" id="sm-vessel">
-          </div>
-          <div class="col-6">
-            <label class="form-label small mb-1">ETD 预计离港</label>
+            <label class="form-label small mb-1">ETD</label>
             <input type="date" class="form-control form-control-sm" id="sm-etd">
           </div>
           <div class="col-6">
-            <label class="form-label small mb-1">ETA 预计到港</label>
+            <label class="form-label small mb-1">ETA</label>
             <input type="date" class="form-control form-control-sm" id="sm-eta">
           </div>
           <div class="col-6">
-            <label class="form-label small mb-1">Carrier 货代</label>
+            <label class="form-label small mb-1">VESSEL</label>
+            <input type="text" class="form-control form-control-sm" id="sm-vessel">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">Carrier</label>
             <input type="text" class="form-control form-control-sm" id="sm-carrier">
           </div>
           <div class="col-6">
-            <label class="form-label small mb-1">柜型 Container Type</label>
-            <input type="text" class="form-control form-control-sm" id="sm-container-type" placeholder="如 40HQ">
+            <label class="form-label small mb-1">Container Type</label>
+            <input type="text" class="form-control form-control-sm" id="sm-container-type" placeholder="e.g. 40HQ">
           </div>
           <div class="col-6">
-            <label class="form-label small mb-1">CBM 体积</label>
+            <label class="form-label small mb-1">CBM</label>
             <input type="number" step="any" min="0" class="form-control form-control-sm" id="sm-cbm">
           </div>
         </div>
         <div class="small text-muted mt-2">
-          这些项会写入当月装柜列表；留空则暂时不填，之后可在 Excel 里补。
+          Click "Save" to update the Shipment List directly (no re-export needed); blank fields keep their current values.<br>
+          If only ETD is filled, ETA is derived automatically (air +1 day, sea/truck +8 days).<br>
+          {% if user.role in [ROLE_TYPE3, ROLE_ADMIN] %}
+          ID is stored in the platform only (not written into Excel) and is shown in "Invoice Details" as well.
+          {% endif %}
         </div>
+        <div id="sm-status" class="small mt-2"></div>
       </div>
       <div class="modal-footer py-2">
-        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">取消</button>
-        <button type="button" class="btn btn-success btn-sm" id="btn-confirm-export" onclick="confirmExport()">确认导出</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success btn-sm" id="btn-save-shipment" onclick="saveShipmentInfo()">Save</button>
       </div>
     </div>
   </div>
@@ -256,6 +271,7 @@ function buildForm(fields, meta) {
     el.dataset.key = f.key;
     if (f.hint) el.title = f.hint;
     el.addEventListener('input', () => onFormInput(f, el));
+    el.addEventListener('change', scheduleAutoSave);
     wrap.appendChild(el);
     if (f.hint) {
       const hint = document.createElement('div');
@@ -271,9 +287,9 @@ function buildForm(fields, meta) {
     }
   });
 
-  // 集装箱区域的 2、3 行也回填到同一个文本域
+  // 集装箱区域的 2-4 行也回填到同一个文本域（每行一格，对应 Container 1-4）
   if (meta.container_row) {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       cellToField.set('INV1!A' + (meta.container_row + 1 + i), { key: 'container_info', line: i });
     }
   }
@@ -312,14 +328,14 @@ function applyDefaults(meta, first, stored) {
       }
     });
   }
-  if (restored) setStatus('已回填上次保存的人工字段（' + restored + ' 项）', 'text-info');
+  if (restored) setStatus('Restored ' + restored + ' previously saved manual field(s)', 'text-info');
   syncAllToGrid();
 }
 
 function onFormInput(field, el) {
   if (field.multiline && META && META.container_row) {
     const lines = el.value.split('\n');
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       InvoiceGrid.setCellValue('INV1', 'A' + (META.container_row + 1 + i), (lines[i] || '').trim());
     }
   } else if (field.cell) {
@@ -356,6 +372,7 @@ function onGridChange(sheetName, coord, value) {
       InvoiceGrid.setCellValue('INV1', 'J' + hit.row, text.trim() === '' ? null : p.amount);
     }
     scheduleDraft();
+    scheduleAutoSave();
     return;
   }
   const el = inputs.get(hit.key);
@@ -370,6 +387,7 @@ function onGridChange(sheetName, coord, value) {
     el.value = text;
   }
   scheduleDraft();
+  scheduleAutoSave();
 }
 
 function collectForm() {
@@ -421,7 +439,7 @@ function onPriceInput(e) {
     const tag = rowBox.querySelector('span.small');
     if (tag) {
       tag.className = 'small ' + (text === '' ? 'text-warning fw-semibold' : 'text-muted');
-      tag.textContent = text === '' ? '无单价' : (p.overridden ? '已手动修改' : '自动');
+      tag.textContent = text === '' ? 'No price' : (p.overridden ? 'Manually set' : 'Auto');
     }
   }
   updatePriceTooltip();
@@ -433,15 +451,15 @@ function updatePriceTooltip() {
   if (!priceHelp) return;
   const lines = (META.prices || []).map(p => {
     if (p.missing) {
-      return '<b>' + p.fabric_type + '</b>：无单价（请在左侧填写或表格 I 列填写）';
+      return '<b>' + p.fabric_type + '</b>: no unit price (fill it in on the left or in column I of the sheet)';
     }
-    const src = p.overridden ? '手动填写' : '单价表';
+    const src = p.overridden ? 'manual' : 'price list';
     return '<b>' + p.fabric_type + '</b><br>' +
-           '净重 ' + p.weight + ' KGS × ' + p.ratio_pct +
-           ' = 报关净重 <b>' + p.customs_weight + '</b> KGS<br>' +
-           '单价 $' + p.price + '（' + src + '） → 金额 <b>$' + p.amount + '</b>';
+           'Net weight ' + p.weight + ' KGS × ' + p.ratio_pct +
+           ' = customs net weight <b>' + p.customs_weight + '</b> KGS<br>' +
+           'Unit price $' + p.price + ' (' + src + ') → amount <b>$' + p.amount + '</b>';
   });
-  priceHelp.title = '表格中各值对应的金额：<br><br>' + lines.join('<br><br>');
+  priceHelp.title = 'Amounts for the values in the sheet:<br><br>' + lines.join('<br><br>');
   const inst = bootstrap.Tooltip.getInstance(priceHelp);
   if (inst) inst.setContent({ '.tooltip-inner': priceHelp.title });
 }
@@ -462,8 +480,9 @@ function applyUnitPrices(raw) {
 }
 
 async function saveManual(force) {
+  if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
   const form = collectForm();
-  setStatus('保存中...');
+  setStatus('Saving...');
   try {
     const res = await fetch('/api/invoices/manual-save?ids=' + encodeURIComponent(IDS), {
       method: 'POST',
@@ -472,26 +491,32 @@ async function saveManual(force) {
     });
     const data = await res.json();
     if (!data.ok) {
-      setStatus(data.error || '保存失败', 'text-danger');
+      setStatus(data.error || 'Save failed', 'text-danger');
       return;
     }
     if (data.conflict) {
       const ok2 = confirm(
-        '注意：' + data.saved_by + ' 已于 ' + data.saved_at + ' 保存过此发票，\n' +
-        '你当前页面可能不是最新版本。\n\n' +
-        '点「确定」用当前内容覆盖保存（会覆盖他人改动）；\n' +
-        '点「取消」放弃保存，刷新页面查看最新内容。');
+        'Warning: ' + data.saved_by + ' already saved these invoices at ' + cnTime(data.saved_at) + '.\n' +
+        'Your page may not show the latest version.\n\n' +
+        'Click "OK" to overwrite with your current content (their changes will be lost);\n' +
+        'Click "Cancel" to skip saving and refresh the page for the latest content.');
       if (ok2) {
         await saveManual(true);
         return;
       }
-      setStatus('未保存（他人已有更新的版本）', 'text-warning');
+      autoSaveBlocked = true;
+      setStatus('Not saved (someone else has a newer version; autosave paused, please refresh the page)', 'text-warning');
       return;
     }
+    autoSaveBlocked = false;
     META.last_saved_at = data.saved_at || META.last_saved_at;
-    setStatus('已保存（可随时按 Ctrl+S 保存）', 'text-success');
+    const mSaved = document.getElementById('m-saved');
+    if (mSaved && META.last_saved_at) {
+      mSaved.textContent = (META.last_saved_by ? META.last_saved_by + ' · ' : '') + cnTime(META.last_saved_at);
+    }
+    setStatus('Saved automatically', 'text-success');
   } catch (err) {
-    setStatus('保存异常: ' + err, 'text-danger');
+    setStatus('Save error: ' + err, 'text-danger');
   }
 }
 
@@ -502,6 +527,19 @@ document.addEventListener('keydown', (e) => {
     saveManual();
   }
 }, true);
+
+// ---- 自动保存：编辑完单元格/字段跳出后自动保存（无需保存按钮） ----
+let autoSaveTimer = null;
+let autoSaveBlocked = false;   // 他人有更新且放弃覆盖时暂停自动保存，避免反复弹窗
+
+function scheduleAutoSave() {
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    autoSaveTimer = null;
+    if (autoSaveBlocked) return;
+    saveManual();
+  }, 800);
+}
 
 // ---- 离开页面草稿：跳转到其他菜单再回来时恢复未保存的编辑内容 ----
 function draftKey() { return 'edit_draft_' + IDS; }
@@ -531,11 +569,11 @@ function restoreDraft() {
   });
   if (restored) {
     syncAllToGrid();
-    setStatus('已恢复离开前未保存的编辑内容', 'text-info');
+    setStatus('Restored unsaved edits from before you left', 'text-info');
   }
   if (draft.form.unit_prices) {
     applyUnitPrices(draft.form.unit_prices);
-    setStatus('已恢复离开前未保存的编辑内容（含单价修改）', 'text-info');
+    setStatus('Restored unsaved edits from before you left (incl. unit price changes)', 'text-info');
   }
 }
 
@@ -544,44 +582,46 @@ function clearDraft() {
 }
 
 async function loadSnapshot() {
-  setStatus('加载模板中...');
+  setStatus('Loading template...');
   const res = await fetch('/api/invoices/snapshot?ids=' + encodeURIComponent(IDS));
   const data = await res.json();
   if (!data.ok) {
-    setStatus(data.error || '加载失败', 'text-danger');
-    alert(data.error || '加载失败');
+    setStatus(data.error || 'Failed to load', 'text-danger');
+    alert(data.error || 'Failed to load');
     return;
   }
   META = data.meta;
   FIELDS = data.fields;
   const priceWarn = document.getElementById('price-warning');
   if (META.missing_prices && META.missing_prices.length) {
-    priceWarn.innerHTML = '以下面料类型<b>未在单价表中找到单价</b>：' +
-      META.missing_prices.join('、') +
-      '。<br>请导出后在 Excel 的 <b>I 列（橙色底纹单元格）</b>手动填写单价并核对金额。';
+    priceWarn.innerHTML = 'No unit price found in the price list for the following fabric types: ' +
+      META.missing_prices.join(', ') +
+      '.<br>Please fill in the unit price manually in <b>column I (shaded orange cells)</b> of the Excel sheet and double-check the amounts.';
     priceWarn.classList.remove('d-none');
   } else {
     priceWarn.classList.add('d-none');
   }
-  document.getElementById('m-transport').textContent = META.transport || '-';
+  const TRANSPORT_EN = { '海运': 'Sea', '空运': 'Air', '陆运': 'Truck' };
+  document.getElementById('m-transport').textContent =
+    TRANSPORT_EN[META.transport] || META.transport || '-';
   document.getElementById('m-company').textContent = META.company || '-';
   document.getElementById('m-weight').textContent = META.customs_weight + ' KGS';
   document.getElementById('m-amount').textContent = '$' + Number(META.total_amount || 0).toLocaleString();
   document.getElementById('m-file').textContent = META.file_stem + '.xlsm';
   document.getElementById('m-source').textContent = META.source_filename || '-';
   document.getElementById('m-saved').textContent = META.last_saved_by
-    ? (META.last_saved_by + ' · ' + (META.last_saved_at || '')) : '尚未保存';
+    ? (META.last_saved_by + ' · ' + cnTime(META.last_saved_at)) : 'Not saved yet';
   const priceBox = document.getElementById('m-prices');
   const priceHelp = document.getElementById('price-help');
   if (META.prices && META.prices.length) {
     priceBox.innerHTML = META.prices.map(p => {
       const auto = p.auto_price ? String(p.auto_price) : '';
       const val = p.missing ? '' : String(p.price);
-      const hint = p.auto_price ? ('单价表 ' + p.auto_price) : '单价表无此面料';
+      const hint = p.auto_price ? ('Price list ' + p.auto_price) : 'Not in price list';
       const tag = p.missing
-        ? '<span class="small text-warning fw-semibold">无单价</span>'
+        ? '<span class="small text-warning fw-semibold">No price</span>'
         : '<span class="small text-muted" title="' + hint + '">' +
-          (p.overridden ? '已手动修改' : '自动') + '</span>';
+          (p.overridden ? 'Manually set' : 'Auto') + '</span>';
       return '<div class="d-flex align-items-center gap-2 mb-1">' +
         '<span class="text-truncate" style="max-width:120px" title="' + p.fabric_type + '">' +
         p.fabric_type + '</span>' +
@@ -592,6 +632,7 @@ async function loadSnapshot() {
     }).join('');
     priceBox.querySelectorAll('.price-input').forEach(el => {
       el.addEventListener('input', onPriceInput);
+      el.addEventListener('change', scheduleAutoSave);
     });
     updatePriceTooltip();
     if (!bootstrap.Tooltip.getInstance(priceHelp)) {
@@ -622,83 +663,191 @@ async function loadSnapshot() {
     }
   });
   restoreDraft();
-  setStatus('已就绪');
+  setStatus('Ready');
 }
 
 let pendingExportForm = null;
+
+function cnTime(s) {
+  if (!s) return '';
+  const d = new Date(String(s).replace(' ', 'T') + 'Z');
+  if (isNaN(d)) return String(s);
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+    ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+// 第二类账号只编辑报关发票本身，生成后不弹装柜补充信息窗口
+const CAN_SHIPMENT_INFO = {{ 'true' if user.role != ROLE_TYPE2 else 'false' }};
+// 字段随模板按角色渲染（ID 仅第三类/管理员可见），只保留在页面上实际存在的项
+const SM_FIELDS = [
+  ['sm-ref-id', 'ref_id'], ['sm-package', 'package'], ['sm-etd', 'etd'], ['sm-eta', 'eta'],
+  ['sm-vessel', 'vessel'], ['sm-carrier', 'carrier'],
+  ['sm-container-type', 'container_type'], ['sm-cbm', 'cbm'],
+].filter(([elId]) => !!document.getElementById(elId));
+let shipmentInfo = null;  // 装柜列表补充信息（生成后弹窗填写，直接更新装柜列表，并随下次导出写入）
+
+function openShipmentInfo() {
+  SM_FIELDS.forEach(([elId, key]) => {
+    document.getElementById(elId).value = (shipmentInfo && shipmentInfo[key]) || '';
+  });
+  const st = document.getElementById('sm-status');
+  st.textContent = '';
+  st.className = 'small mt-2';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('shipment-modal')).show();
+}
+
+async function saveShipmentInfo() {
+  const info = {};
+  SM_FIELDS.forEach(([elId, key]) => {
+    info[key] = document.getElementById(elId).value.trim();
+  });
+  shipmentInfo = info;
+  const body = new URLSearchParams();
+  body.set('ids', IDS);
+  SM_FIELDS.forEach(([, key]) => body.set(key, info[key]));
+  const btn = document.getElementById('btn-save-shipment');
+  btn.disabled = true;
+  const st = document.getElementById('sm-status');
+  try {
+    const res = await fetch('/api/shipments/info', { method: 'POST', body });
+    const data = await res.json();
+    if (data.ok) {
+      st.textContent = (data.message || 'Saved') + '; these values will also be written along with the next export.';
+      st.className = 'small mt-2 text-success';
+    } else {
+      st.textContent = data.error || 'Save failed';
+      st.className = 'small mt-2 text-warning';
+    }
+  } catch (err) {
+    st.textContent = 'Save error: ' + err;
+    st.className = 'small mt-2 text-danger';
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 async function doExport() {
   const form = collectForm();
   const missing = FIELDS.filter(f => f.applicable && f.required && !form[f.key]);
   if (missing.length) {
-    alert('请先填写：' + missing.map(f => f.label).join('、'));
+    alert('Please fill in the required fields first: ' + missing.map(f => f.label).join(', '));
     const el = inputs.get(missing[0].key);
     if (el) el.focus();
     return;
   }
   pendingExportForm = form;
-  // 清空弹窗残留，避免带入上一次导出的值
-  ['sm-package', 'sm-etd', 'sm-eta', 'sm-vessel', 'sm-carrier',
-   'sm-container-type', 'sm-cbm'].forEach(id => {
-    document.getElementById(id).value = '';
-  });
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('shipment-modal')).show();
-}
-
-async function confirmExport() {
-  const shipment = {
-    package: document.getElementById('sm-package').value.trim(),
-    etd: document.getElementById('sm-etd').value.trim(),
-    eta: document.getElementById('sm-eta').value.trim(),
-    vessel: document.getElementById('sm-vessel').value.trim(),
-    carrier: document.getElementById('sm-carrier').value.trim(),
-    container_type: document.getElementById('sm-container-type').value.trim(),
-    cbm: document.getElementById('sm-cbm').value.trim(),
-  };
-  bootstrap.Modal.getInstance(document.getElementById('shipment-modal')).hide();
 
   const btn = document.getElementById('btn-export');
   btn.disabled = true;
-  setStatus('生成中...');
+  setStatus('Generating...');
   try {
     const res = await fetch('/api/invoices/export?ids=' + encodeURIComponent(IDS), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ form: pendingExportForm, shipment }),
+      body: JSON.stringify({ form: pendingExportForm, shipment: shipmentInfo || {} }),
     });
     const data = await res.json();
     if (!data.ok) {
-      setStatus(data.error || '导出失败', 'text-danger');
-      alert(data.error || '导出失败');
+      setStatus(data.error || 'Export failed', 'text-danger');
+      alert(data.error || 'Export failed');
       return;
     }
-    setStatus('已生成并保存：' + data.filename, 'text-success');
+    setStatus('Generated and saved: ' + data.filename, 'text-success');
     if (data.saved_at) META.last_saved_at = data.saved_at;
     clearDraft();
     const box = document.getElementById('save-result');
     box.classList.remove('d-none');
     document.getElementById('save-info').innerHTML =
-      '已生成并保存：' + data.folder + '/' + data.filename + '（第 ' + data.version + ' 次生成）' +
-      ' <a href="' + data.download + '" class="ms-1">下载此文件</a>' +
-      ' <a href="/files" class="ms-1">查看报关发票</a>' +
+      'Generated and saved: ' + data.folder + '/' + data.filename + ' (generation #' + data.version + ')' +
+      ' <a href="' + data.download + '" class="ms-1">Download file</a>' +
+      ' <a href="/shipments" class="ms-1">View Shipment List</a>' +
       (data.list_download
-        ? '<br>装柜列表已更新：' + data.list_filename +
-          ' <a href="' + data.list_download + '" class="ms-1">下载列表</a>' +
-          ' <a href="' + (data.list_url || '/shipments') + '" class="ms-1">查看装柜列表</a>'
+        ? '<br>Shipment List updated: ' + data.list_filename +
+          ' <a href="' + data.list_download + '" class="ms-1">Download</a>' +
+          ' <a href="' + (data.list_url || '/shipments') + '" class="ms-1">View Shipment List</a>'
         : '') +
       (data.track_changes
-        ? '<br><span class="text-muted">已开启本地修订记录：Excel「审阅 → 修订」可查看后续修改。</span>'
+        ? '<br><span class="text-muted">Local track changes is enabled: see "Review - Track Changes" in Excel for later edits.</span>'
         : '');
     const warns = document.getElementById('export-warnings');
     const warnMsgs = Array.isArray(data.messages)
-      ? data.messages.filter(m => String(m).indexOf('未在单价表') >= 0) : [];
+      ? data.messages.filter(m => String(m).indexOf('no unit price') >= 0) : [];
     if (warnMsgs.length) {
       warns.innerHTML = warnMsgs.map(m => '⚠ ' + m).join('<br>');
     } else {
       warns.innerHTML = '';
     }
+    // 生成完成后自动弹窗，填写 Shipment List 需要手动输入的信息
+    // （第二类账号只编辑报关发票本身，不弹装柜补充信息窗口）
+    if (CAN_SHIPMENT_INFO) {
+      openShipmentInfo();
+      const st = document.getElementById('sm-status');
+      st.textContent = 'Generated ' + data.filename + '. Click "Save" to write the fields below directly into the Shipment List (blank fields keep their current values).';
+      st.className = 'small mt-2 text-muted';
+    }
   } catch (err) {
-    setStatus('导出异常: ' + err, 'text-danger');
+    setStatus('Export error: ' + err, 'text-danger');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---- 重置：一次生成→清空全部填写内容；旧版报关单→恢复成上个版本 ----
+async function doReset() {
+  let plan;
+  try {
+    const res = await fetch('/api/invoices/reset-plan?ids=' + encodeURIComponent(IDS));
+    plan = await res.json();
+  } catch (err) {
+    setStatus('Reset error: ' + err, 'text-danger');
+    return;
+  }
+  if (!plan.ok) {
+    setStatus(plan.error || 'Reset failed', 'text-danger');
+    return;
+  }
+  let msg;
+  if (plan.mode === 'restore') {
+    msg = 'Reset will restore ALL manually filled content (incl. unit price overrides)\n' +
+      'to the previous version: generation #' + plan.target_version +
+      ' (current is generation #' + plan.latest_version + ').\n\n' +
+      'The generated .xlsm file is not changed; click "Generate .xlsm" afterwards to rebuild it.\n\n' +
+      'Continue?';
+  } else {
+    msg = 'This declaration has only been generated once (or not at all),\n' +
+      'so there is no older version to restore.\n\n' +
+      'Reset will CLEAR all manually filled content (incl. unit price overrides).\n\n' +
+      'Continue?';
+  }
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('btn-reset');
+  btn.disabled = true;
+  setStatus('Resetting...');
+  try {
+    const res = await fetch('/api/invoices/reset?ids=' + encodeURIComponent(IDS), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setStatus(data.error || 'Reset failed', 'text-danger');
+      return;
+    }
+    if (data.saved_at) META.last_saved_at = data.saved_at;
+    if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+    autoSaveBlocked = false;
+    clearDraft();
+    await loadSnapshot();
+    if (data.mode === 'clear') {
+      // 一键清空：不留任何默认值，输入框全部置空
+      inputs.forEach((el) => { el.value = ''; });
+      syncAllToGrid();
+    }
+    setStatus(data.message || 'Reset done', 'text-success');
+  } catch (err) {
+    setStatus('Reset error: ' + err, 'text-danger');
   } finally {
     btn.disabled = false;
   }
