@@ -22,7 +22,7 @@
   <nav class="sidebar-nav">
     {% if user and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
     <a class="side-link {% if request.url.path.startswith('/invoices') %}active{% endif %}" href="/invoices">
-      <span class="ico">▤</span> Invoice List</a>
+      <span class="ico">▤</span> E-Invoice List</a>
     {% endif %}
     {% if user and user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
     <a class="side-link {% if request.url.path.startswith('/shipments') %}active{% endif %}" href="/shipments">
