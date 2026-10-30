@@ -115,7 +115,8 @@ def build_for_edit(invoices: list[Invoice]) -> tuple[BuildResult, list[SourceDat
     stored = _stored_manual(invoices)
     exporter = get_exporter()
     result = exporter.build(
-        groups[0], ManualFields(unit_prices=parse_unit_prices(stored.get("unit_prices")))
+        groups[0],
+        ManualFields(unit_prices=parse_unit_prices(stored.get("unit_prices"))),
     )
     if not result.ok:
         raise ValueError("; ".join(result.messages) or "Build failed")
@@ -542,6 +543,8 @@ def export_invoices(
     )
     if backup_path:
         logger.info("上一版已留底: {}", backup_path)
+    # 回传装柜补充信息（含 PKL 自动提取的 Package），供编辑页生成后弹窗自动预填
+    shipment_payload: dict[str, Any] = {**shipment_row.as_dict(), "ref_id": ref_id}
     return out_path, {
         "filename": out_path.name,
         "path": str(out_path),
@@ -553,6 +556,7 @@ def export_invoices(
         "total_amount": result.total_amount,
         "messages": result.messages,
         "track_changes": track_changes,
+        "shipment": shipment_payload,
         **list_info,
     }
 
@@ -682,6 +686,44 @@ def record_shipment_list(
     }
 
 
+# ---- Shipment List 新增行（纯手工空行） ----
+
+
+def add_empty_shipment_row(
+    db: Session,
+    user: Optional[User] = None,
+) -> tuple[ShipmentListEntry, dict[str, Any]]:
+    """Shipment List 新增行：直接落一条空记录，全部字段行内手填。
+
+    不生成报关单文件、不关联 Invoice / ExportJob / 源文件；报关单文件名
+    （Customs Reference Number，custom_ref）为纯文本手填，无真实文件。
+    顺带刷新当月装柜列表 Excel。
+
+    Args:
+        db: 数据库会话。
+        user: 操作人。
+
+    Returns:
+        (新建记录, 结果信息含 entry_id / list_month / list_url)。
+    """
+    month = month_of(None)
+    entry = ShipmentListEntry(
+        month=month,
+        is_manual=True,
+        created_by=user.username if user else None,
+    )
+    db.add(entry)
+    db.commit()
+    path = rebuild_shipment_month(db, month)
+    logger.info("装柜列表新增空行 by {}", user.username if user else "-")
+    return entry, {
+        "entry_id": entry.id,
+        "list_month": month,
+        "list_filename": path.name,
+        "list_url": f"/shipments?month={month}",
+    }
+
+
 # ---- Shipment List 行内编辑（三路同步：平台 / .xlsm / 发票明细） ----
 
 
@@ -718,7 +760,7 @@ ENTRY_EDIT_FIELDS: tuple[str, ...] = (
     "container_1", "container_2", "container_3", "container_4",
     "nw_kg", "gw_kg", "description", "mode", "etd", "eta", "pol",
     "vessel", "carrier", "container_type", "cbm",
-    "machine_cabinet", "aux_cabinet", "ref_id",
+    "machine_cabinet", "aux_cabinet", "ref_id", "custom_ref",
 )
 
 #: 手动填入字段（装柜补充信息弹窗 + Shipment List 页手填），第三类账号仅可改这些
@@ -728,21 +770,26 @@ MANUAL_EDIT_FIELDS: tuple[str, ...] = (
 )
 
 
-def editable_entry_fields(user: Optional[User]) -> tuple[str, ...]:
+def editable_entry_fields(user: Optional[User], is_manual: bool = False) -> tuple[str, ...]:
     """按角色返回 Shipment List 行内可编辑字段（权限分割）。
 
-    第一类账号 / 管理员拥有全部编辑权限；第三类账号仅手动填入字段；
+    Shipment List 行内编辑对第一类 / 第三类 / 管理员开放手动填入字段（ID、
+    Package、ETD、ETA、VESSEL、Carrier、Container Type、CBM、Machine
+    Cabinet、Aux Cabinet）；报关发票的整张编辑通过「Edit」按钮跳转到发票明细
+    编辑页（仅第一类 / 管理员）。手工新增的空行（is_manual）无源文件可跳转，
+    因此整行全部字段（含 Customs Reference Number 文件名）都在行内手填。
     第二类账号看不见装柜列表，无可编辑字段。
 
     Args:
-        user: 当前用户；None（系统调用）视为全部可写。
+        user: 当前用户；None（系统调用）视为可编辑。
+        is_manual: 是否为手工新增空行；True 时返回全部字段。
 
     Returns:
         可编辑字段名元组（:data:`ENTRY_EDIT_FIELDS` 的子集）。
     """
-    if user is None or user.role in (ROLE_TYPE1, ROLE_ADMIN):
-        return ENTRY_EDIT_FIELDS
-    if user.role == ROLE_TYPE3:
+    if user is None or user.role in (ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN):
+        if is_manual:
+            return ENTRY_EDIT_FIELDS
         return MANUAL_EDIT_FIELDS
     return ()
 
@@ -755,7 +802,8 @@ ENTRY_FIELD_LABELS: dict[str, str] = {
     "nw_kg": "NW KG", "gw_kg": "GW KG", "description": "DESCRIPTION", "mode": "Mode",
     "etd": "ETD", "eta": "ETA", "pol": "POL", "vessel": "VESSEL", "carrier": "Carrier",
     "container_type": "Container Type", "cbm": "CBM",
-    "machine_cabinet": "机器柜", "aux_cabinet": "辅料柜", "ref_id": "ID",
+    "machine_cabinet": "Machine Cabinet", "aux_cabinet": "Aux Cabinet", "ref_id": "ID",
+    "custom_ref": "Customs Reference Number",
 }
 
 _CONTAINER_FIELDS = ("container_1", "container_2", "container_3", "container_4")
@@ -929,6 +977,10 @@ def sync_entry_to_xlsm(
     if not hit:
         return {"synced": False, "message": ""}
 
+    # 手工新增空行无报关发票文件，仅落库，不做文件改写
+    if entry.is_manual:
+        return {"synced": False, "message": ""}
+
     job = db.get(ExportJob, entry.job_id) if entry.job_id else None
     folder = name = ""
     if job and job.filename:
@@ -1043,9 +1095,8 @@ def update_shipment_entry(
     previous_month = entry.month or ""
     old_values: dict[str, Any] = {f: getattr(entry, f) for f in ENTRY_EDIT_FIELDS}
 
-    # 权限分割：越权字段一律跳过、保留原值
-    # （第一类 / 管理员全字段；第三类仅手动填入字段，含 ID）
-    editable = set(editable_entry_fields(user))
+    # 权限分割：越权字段一律跳过、保留原值（手工新增空行整行可编辑）
+    editable = set(editable_entry_fields(user, entry.is_manual))
 
     for field in ENTRY_EDIT_FIELDS:
         if field not in editable:
@@ -1182,40 +1233,6 @@ def record_manual_save(
     db.commit()
 
 
-def batch_generations(
-    db: Session, invoices: list[Invoice]
-) -> list[ExportFileVersion]:
-    """返回该批发票的报关单生成记录（第 1..N 次生成，按生成先后排序）。
-
-    以 invoice_ids 集合完全一致视为同一批（合并导出共享同一组发票）。
-
-    Args:
-        db: 数据库会话。
-        invoices: 本批发票。
-
-    Returns:
-        kind="export" 的版本记录列表。
-    """
-    wanted = {invoice.id for invoice in invoices}
-    if not wanted:
-        return []
-    rows = (
-        db.query(ExportFileVersion)
-        .filter(ExportFileVersion.kind == "export")
-        .order_by(ExportFileVersion.id.asc())
-        .all()
-    )
-    matched: list[ExportFileVersion] = []
-    for row in rows:
-        try:
-            ids = {int(x) for x in json.loads(row.invoice_ids or "[]")}
-        except (TypeError, ValueError):
-            continue
-        if ids == wanted:
-            matched.append(row)
-    return matched
-
-
 def first_generation_ids(db: Session, folder: str, name: str) -> str:
     """报关发票文件第一次生成时的发票 id 串（如 "1,2"），无生成记录返回 ""。
 
@@ -1249,73 +1266,6 @@ def first_generation_ids(db: Session, folder: str, name: str) -> str:
     except (TypeError, ValueError):
         return ""
     return ",".join(str(i) for i in ids)
-
-
-def reset_manual_state(
-    db: Session,
-    invoices: list[Invoice],
-    user: Optional[User] = None,
-    *,
-    apply: bool = True,
-) -> dict[str, Any]:
-    """一键重置编辑页填写内容（人工字段 / 单价覆盖）。
-
-    按生成版本回退一步：一次生成的报关单（只生成过一次或尚未生成）
-    清空全部填写内容；旧版报关单（生成过多次）恢复成上个版本
-    （第 N-1 次生成）保存的 form_values。
-
-    Args:
-        db: 数据库会话。
-        invoices: 本批发票。
-        user: 操作人（写入保存人 / 修改留痕）。
-        apply: False 时只返回重置计划供前端确认，不落库。
-
-    Returns:
-        {"mode": "clear"/"restore", "target_version", "latest_version",
-        "generations", "values", "message"}。
-    """
-    generations = batch_generations(db, invoices)
-    latest = generations[-1] if generations else None
-    target = generations[-2] if len(generations) >= 2 else None
-
-    values = {key: "" for key in sorted(ALLOWED_KEYS)}
-    if target is not None:
-        try:
-            raw = json.loads(target.form_values or "{}")
-        except (TypeError, ValueError):
-            raw = {}
-        if isinstance(raw, dict):
-            for key, value in raw.items():
-                if str(key).startswith("_") or key not in ALLOWED_KEYS:
-                    continue
-                values[str(key)] = "" if value is None else str(value).strip()
-        mode = "restore"
-        message = (
-            f"Restored the manually filled content to generation #{target.version}"
-            f" (the version before the current #{latest.version})"
-        )
-    else:
-        mode = "clear"
-        message = (
-            "Cleared all manually filled content"
-            + (
-                " (this declaration has only been generated once, no older version to restore)"
-                if latest is not None
-                else " (this declaration has not been generated yet)"
-            )
-        )
-
-    if apply:
-        save_manual_values(db, invoices, values, user)
-        record_manual_save(db, invoices, values, user)
-    return {
-        "mode": mode,
-        "target_version": target.version if target is not None else None,
-        "latest_version": latest.version if latest is not None else None,
-        "generations": len(generations),
-        "values": values,
-        "message": message,
-    }
 
 
 def export_map_for(

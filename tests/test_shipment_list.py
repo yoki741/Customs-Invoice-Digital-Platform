@@ -234,9 +234,9 @@ def main() -> None:
         check("mmm" in ws["A2"].number_format, "日期格式沿用模板")
         check(ws["A2"].border.left.style == "thin", "边框沿用模板")
         check(ws["U1"].value == "柜型" and ws["V1"].value == "CBM"
-              and ws["W1"].value == "机器柜" and ws["X1"].value == "辅料柜"
+              and ws["W1"].value == "Machine Cabinet" and ws["X1"].value == "Aux Cabinet"
               and ws["Y1"].value == "ID",
-              "新列表头 柜型/CBM/机器柜/辅料柜/ID")
+              "新列表头 柜型/CBM/Machine Cabinet/Aux Cabinet/ID")
         check(ws["U2"].value == "40HQ" and ws["V2"].value == 45.5,
               "第 2 行写入柜型/CBM")
         check(ws["W2"].value == "MSKU1234567" and ws["X2"].value == "TGHU7654321",

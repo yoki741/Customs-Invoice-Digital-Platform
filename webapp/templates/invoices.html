@@ -11,6 +11,22 @@
     100% { background-color: transparent; }
   }
   tr.row-flash > td { animation: row-flash 3s ease-out forwards; }
+  /* 日期筛选框：用遮罩固定空态提示为 yyyy/mm/dd（原生 date 空态提示随浏览器语言，无法用 lang 覆盖） */
+  .date-field { position: relative; }
+  .date-hint {
+    position: absolute;
+    left: .5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    font-size: .875rem;
+    line-height: 1;
+    color: #6c757d;
+    background: #fff;
+    padding-right: .25rem;
+    pointer-events: none;
+    white-space: nowrap;
+  }
 </style>
 {% endblock %}
 {% block content %}
@@ -165,11 +181,17 @@
       </div>
       <div class="col-6 col-md-2">
         <label class="form-label">Imported From</label>
-        <input type="date" class="form-control form-control-sm" name="date_from" value="{{ date_from }}">
+        <div class="date-field">
+          <input type="date" class="form-control form-control-sm" name="date_from" value="{{ date_from }}" placeholder="yyyy/mm/dd">
+          <span class="date-hint">yyyy/mm/dd</span>
+        </div>
       </div>
       <div class="col-6 col-md-2">
         <label class="form-label">Imported To</label>
-        <input type="date" class="form-control form-control-sm" name="date_to" value="{{ date_to }}">
+        <div class="date-field">
+          <input type="date" class="form-control form-control-sm" name="date_to" value="{{ date_to }}" placeholder="yyyy/mm/dd">
+          <span class="date-hint">yyyy/mm/dd</span>
+        </div>
       </div>
       <div class="col-auto">
         <button class="btn btn-primary btn-sm">Filter</button>
@@ -290,6 +312,17 @@ function dismissContinue() {
 function toggleAll(box) {
   document.querySelectorAll('.row-check').forEach(c => { c.checked = box.checked; });
 }
+
+// 日期筛选框空态提示：有值或聚焦时隐藏遮罩，空态显示 yyyy/mm/dd
+document.querySelectorAll('.date-field input[type="date"]').forEach(inp => {
+  const hint = inp.parentElement.querySelector('.date-hint');
+  if (!hint) return;
+  const update = () => {
+    hint.style.visibility = (inp.value || inp === document.activeElement) ? 'hidden' : 'visible';
+  };
+  ['input', 'change', 'focus', 'blur'].forEach(ev => inp.addEventListener(ev, update));
+  update();
+});
 
 // ---- 数据导入弹窗 ----
 const ALLOWED_EXT = ['.xlsm', '.xlsx'];

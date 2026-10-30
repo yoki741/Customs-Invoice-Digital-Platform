@@ -10,9 +10,12 @@
     70% { background-color: #fff3bf; }
     100% { background-color: transparent; }
   }
-  tr.row-flash > td { animation: row-flash 1s ease-out forwards; }
+  /* 冻结列（选择框 / 报关发票 / Actions）不参与闪烁，避免动画结束后 background 变透明透出滚动内容 */
+  tr.row-flash > td:not(.sticky-check):not(.sticky-col):not(.sticky-actions) {
+    animation: row-flash 1s ease-out forwards;
+  }
   .shipments-table { font-size: .78rem; white-space: nowrap; }
-  .shipments-table td.small { white-space: normal; min-width: 90px; }
+  .shipments-table td.small { white-space: nowrap; min-width: 90px; }
   .shipments-table td[data-field] { min-width: 64px; }
   .shipments-table td[data-field] input,
   .shipments-table td[data-field] select {
@@ -44,6 +47,44 @@
   }
   .shipments-table tbody tr:hover > .sticky-check,
   .shipments-table tbody tr:hover > .sticky-col { background: #f8f9fc; }
+  /* 报关发票文件名：限宽省略，按钮组右对齐 */
+  .shipments-table .file-name {
+    display: inline-block;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  /* 数字列保留等宽字体，但统一左端对齐（字段一律左对齐，仅按钮右对齐） */
+  .shipments-table td.num { text-align: left; }
+  /* 表头字段居中于两条竖向分割线之间 */
+  .shipments-table thead th { text-align: center; }
+  /* 竖向分割线：列与列之间画 1px 线（首列左缘不画） */
+  .shipments-table th,
+  .shipments-table td {
+    border-left: 1px solid var(--border);
+  }
+  .shipments-table th:first-child,
+  .shipments-table td:first-child {
+    border-left: 0;
+  }
+  /* Fty Inv 保留换行展示，其余字段随表格单行（nowrap） */
+  .shipments-table td.small[data-field="fty_inv"] { white-space: normal; }
+  /* 操作列（Edit）冻结在最右（Excel 冻结右窗格效果），横向滚动时始终可见 */
+  .shipments-table .sticky-actions {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: #fff;
+    box-shadow: inset 1px 0 0 var(--border);
+  }
+  .shipments-table thead .sticky-actions {
+    z-index: 3;
+    background: #fafbfc;
+    box-shadow: inset 1px 0 0 var(--border), inset 0 -1px 0 var(--border);
+  }
+  .shipments-table tbody tr:hover > .sticky-actions { background: #f8f9fc; }
 </style>
 {% endblock %}
 
@@ -89,6 +130,14 @@
         <a class="btn btn-outline-secondary btn-sm" href="/shipments">Reset</a>
       </div>
       <div class="col-auto ms-auto d-flex gap-2">
+        {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
+        <button type="button" class="btn btn-primary btn-sm" id="btn-add-row"
+                onclick="addEmptyRow()" title="Add an empty row and fill in every field manually">
+          Add Row</button>
+        <button type="button" class="btn btn-outline-danger btn-sm" id="btn-delete-rows"
+                onclick="deleteSelected()" title="Delete checked manually-added rows">
+          Delete</button>
+        {% endif %}
         <button type="button" class="btn btn-outline-primary btn-sm"
                 onclick="downloadSelected()" title="Download checked customs invoice .xlsm files as one zip">
           Download Selected</button>
@@ -114,12 +163,12 @@
               <input type="checkbox" class="form-check-input m-0"
                      onclick="toggleAllFiles(this)" title="Check all">
             </th>
-            <th class="sticky-col">Customs Invoice</th>
+            <th class="sticky-col">Customs Reference Number</th>
             <th>Date</th>
             <th>Fty Inv</th>
             <th>Shipper</th>
             <th>EST/VCO</th>
-            <th>Custom #</th>
+            <th>Custom Invoice Number</th>
             <th class="num">Package</th>
             <th>Blading</th>
             <th>Container 1</th>
@@ -137,40 +186,51 @@
             <th>Carrier</th>
             <th>Container Type</th>
             <th class="num">CBM</th>
-            <th>机器柜</th>
-            <th>辅料柜</th>
+            <th>Machine Cabinet</th>
+            <th>Aux Cabinet</th>
             <th>ID</th>
             <th>Updated</th>
-            <th class="text-end">Actions</th>
+            <th class="text-end sticky-actions">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-          <tr data-entry-id="{{ r.id }}">
+          <tr data-entry-id="{{ r.id }}" data-is-manual="{{ 1 if r.is_manual else 0 }}">
             <td class="sticky-check text-center">
               {% if r.file_exists %}
-              <input type="checkbox" class="form-check-input file-check m-0" value="{{ r.id }}">
+              <input type="checkbox" class="form-check-input file-check m-0" value="{{ r.id }}"
+                     title="Check to download the customs invoice file">
+              {% elif r.is_manual %}
+              <input type="checkbox" class="form-check-input manual-check m-0" value="{{ r.id }}"
+                     title="Check to delete this manually-added row">
               {% endif %}
             </td>
-            <td class="small text-nowrap sticky-col">
+            <td class="small text-nowrap sticky-col" data-field="custom_ref" data-value="{{ r.custom_ref or '' }}">
               {% if r.file_exists %}
-                {% if user.role != ROLE_TYPE3 and r.edit_ids %}
-                <a href="/invoices/edit?ids={{ r.edit_ids }}"
-                   title="Edit customs invoice (opens the first-generation edit page)">{{ r.file_name }}</a>
-                <a class="btn btn-sm btn-outline-secondary py-0" href="#" data-folder="{{ r.file_folder }}"
+              <div class="d-flex align-items-center gap-2">
+                <a class="file-name text-truncate" href="#" data-folder="{{ r.file_folder }}"
                    data-name="{{ r.file_name }}" onclick="previewFromLink(this);return false"
-                   title="Preview {{ r.file_name }}">View</a>
-                {% else %}
-                <a href="#" data-folder="{{ r.file_folder }}" data-name="{{ r.file_name }}"
-                   onclick="previewFromLink(this);return false"
-                  title="Preview {{ r.file_name }}">{{ r.file_name }}</a>
-                {% endif %}
-                <a class="btn btn-sm btn-outline-success py-0"
-                   href="/api/download?folder={{ r.file_folder|urlencode }}&name={{ r.file_name|urlencode }}"
-                   title="Download {{ r.file_name }}">Download</a>
-                <button class="btn btn-sm btn-outline-info py-0" data-folder="{{ r.file_folder }}"
-                        data-name="{{ r.file_name }}" onclick="historyFromBtn(this)"
-                        title="Modification history">Log</button>
+                   title="Preview {{ r.file_name }}">{{ r.file_name }}</a>
+                <span class="ms-auto d-inline-flex gap-1 flex-shrink-0">
+                  {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] and r.edit_ids %}
+                  <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.edit_ids }}"
+                     title="Edit customs invoice (opens the first-generation edit page)">Edit</a>
+                  {% endif %}
+                  <a class="btn btn-sm btn-outline-secondary py-0" href="#" data-folder="{{ r.file_folder }}"
+                     data-name="{{ r.file_name }}" onclick="previewFromLink(this);return false"
+                     title="Preview {{ r.file_name }}">View</a>
+                  <a class="btn btn-sm btn-outline-success py-0"
+                     href="/api/download?folder={{ r.file_folder|urlencode }}&name={{ r.file_name|urlencode }}"
+                     title="Download {{ r.file_name }}">Download</a>
+                  {% if user.role == ROLE_ADMIN %}
+                  <button class="btn btn-sm btn-outline-info py-0" data-folder="{{ r.file_folder }}"
+                          data-name="{{ r.file_name }}" onclick="historyFromBtn(this)"
+                          title="Modification history">Log</button>
+                  {% endif %}
+                </span>
+              </div>
+              {% elif r.is_manual %}
+                <span class="text-muted" title="Customs Reference Number (filename only)">{{ r.custom_ref or '-' }}</span>
               {% else %}
                 <span class="text-muted" title="File missing">{{ r.file_name or '-' }}</span>
               {% endif %}
@@ -208,12 +268,8 @@
             <td class="small text-muted text-nowrap cell-updated">
               {{ r.updated_at|localtime('%Y-%m-%d %H:%M') if r.updated_at else '-' }}
             </td>
-            <td class="text-end text-nowrap">
-              <button class="btn btn-sm btn-outline-primary py-0 btn-edit" onclick="editRow(this)">Edit</button>
-              <span class="edit-actions d-none">
-                <button class="btn btn-sm btn-success py-0" onclick="saveRow(this)" title="Save">✓</button>
-                <button class="btn btn-sm btn-outline-secondary py-0" onclick="cancelEdit(this)" title="Cancel">✗</button>
-              </span>
+            <td class="text-end text-nowrap sticky-actions">
+              <button class="btn btn-sm btn-outline-primary py-0 btn-edit" onclick="openShipmentEdit(this)">Edit</button>
             </td>
           </tr>
           {% else %}
@@ -270,6 +326,26 @@
         <button type="button" class="btn-close ms-auto" onclick="closeHistory()"></button>
       </div>
       <div class="modal-body" style="max-height:70vh;overflow-y:auto" id="history-body">
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="shipment-edit-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <span class="fw-semibold small" id="shipment-edit-title">Edit</span>
+        <button type="button" class="btn-close ms-auto" onclick="closeShipmentEdit()"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2" id="se-fields"></div>
+        <div class="small text-muted mt-2" id="se-hint"></div>
+        <div class="text-danger small mt-2 d-none" id="se-status"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeShipmentEdit()">Cancel</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-save-shipment-edit" onclick="saveShipmentEdit()">Save</button>
       </div>
     </div>
   </div>
@@ -444,7 +520,7 @@ function closeHistory() {
 
 // ---- 批量下载报关发票 ----
 function toggleAllFiles(box) {
-  document.querySelectorAll('.file-check').forEach(c => { c.checked = box.checked; });
+  document.querySelectorAll('.file-check, .manual-check').forEach(c => { c.checked = box.checked; });
 }
 
 function downloadSelected() {
@@ -457,9 +533,42 @@ function downloadSelected() {
     boxes.map(b => b.value).join(',');
 }
 
-// ---- 行内编辑 ----
-// 权限分割：第一类 / 管理员全字段可编辑；第三类仅手动填入字段（含 ID）
-const EDITABLE_FIELDS = {{ editable_fields | tojson }};
+// ---- 行内编辑（弹窗） ----
+// 手工新增的空行（is_manual）整行全部字段可在行内手填；普通行仅手动填入字段可改，
+// 其余字段走最左侧「Edit」按钮跳转报关发票编辑页。
+const MANUAL_EDIT_FIELDS = {{ manual_edit_fields | tojson }};
+const ALL_EDIT_FIELDS = {{ all_edit_fields | tojson }};
+
+// 弹窗字段定义：[字段名, 显示名, 输入类型, 占位提示]；顺序与 Shipment List 表头一致。
+// 输入类型：text / textarea / date / number / mode（下拉）。
+const FIELD_DEFS = [
+  ['custom_ref', 'Customs Reference Number', 'text', 'e.g. VANCO INV#2609006-CT(AIR).xlsm'],
+  ['date', 'Date', 'date', ''],
+  ['fty_inv', 'Fty Inv', 'textarea', ''],
+  ['shipper', 'Shipper', 'text', ''],
+  ['est_vco', 'EST/VCO', 'text', 'Eastex / Vanco'],
+  ['custom_no', 'Custom Invoice Number', 'text', ''],
+  ['package', 'Package', 'number', ''],
+  ['blading', 'Blading', 'text', ''],
+  ['container_1', 'Container 1', 'text', ''],
+  ['container_2', 'Container 2', 'text', ''],
+  ['container_3', 'Container 3', 'text', ''],
+  ['container_4', 'Container 4 or other', 'text', ''],
+  ['nw_kg', 'NW KG', 'number', ''],
+  ['gw_kg', 'GW KG', 'number', ''],
+  ['description', 'DESCRIPTION', 'textarea', ''],
+  ['mode', 'Mode', 'mode', ''],
+  ['etd', 'ETD', 'date', ''],
+  ['eta', 'ETA', 'date', ''],
+  ['pol', 'POL', 'text', ''],
+  ['vessel', 'VESSEL', 'text', ''],
+  ['carrier', 'Carrier', 'text', ''],
+  ['container_type', 'Container Type', 'text', 'e.g. 40HQ'],
+  ['cbm', 'CBM', 'number', ''],
+  ['machine_cabinet', 'Machine Cabinet', 'text', ''],
+  ['aux_cabinet', 'Aux Cabinet', 'text', ''],
+  ['ref_id', 'ID', 'text', ''],
+];
 
 function modeBadge(value) {
   if (value === 'AIR') return '<span class="badge bg-info text-dark">AIR</span>';
@@ -478,72 +587,87 @@ function displayValue(field, value) {
   return esc(value);
 }
 
-function editRow(btn) {
+let shipmentEditModal = null;
+let editingTr = null;
+let editingKeys = [];   // 当前弹窗实际渲染（可编辑）的字段名
+
+function fieldHtml(key, label, type, ph) {
+  const id = 'se-' + key;
+  let input;
+  if (type === 'textarea') {
+    input = '<textarea class="form-control form-control-sm" id="' + id + '" rows="2"></textarea>';
+  } else if (type === 'date') {
+    input = '<input type="date" class="form-control form-control-sm" id="' + id + '">';
+  } else if (type === 'number') {
+    input = '<input type="number" step="any" min="0" class="form-control form-control-sm" id="' + id + '">';
+  } else if (type === 'mode') {
+    input = '<select class="form-select form-select-sm" id="' + id + '">' +
+      '<option value=""></option>' +
+      '<option value="AIR">AIR</option>' +
+      '<option value="SEA">SEA</option>' +
+      '<option value="TRUCK">TRUCK</option>' +
+      '</select>';
+  } else {
+    input = '<input type="text" class="form-control form-control-sm" id="' + id + '"' +
+      (ph ? ' placeholder="' + ph + '"' : '') + '>';
+  }
+  const col = (type === 'textarea') ? 'col-12' : 'col-6';
+  return '<div class="' + col + '" data-edit-field="' + key + '">' +
+    '<label class="form-label small mb-1">' + esc(label) + '</label>' + input + '</div>';
+}
+
+function renderEditFields(keys) {
+  const set = new Set(keys);
+  document.getElementById('se-fields').innerHTML = FIELD_DEFS
+    .filter(d => set.has(d[0]))
+    .map(d => fieldHtml(d[0], d[1], d[2], d[3]))
+    .join('');
+}
+
+function openShipmentEdit(btn) {
   const tr = btn.closest('tr');
-  if (tr.dataset.editing === '1') return;
-  tr.dataset.editing = '1';
-  tr.querySelectorAll('td[data-field]').forEach(td => {
-    const field = td.dataset.field;
-    if (!EDITABLE_FIELDS.includes(field)) return;
-    const value = td.dataset.value || '';
-    td.dataset.html = td.innerHTML;
-    let el;
-    if (field === 'date' || field === 'etd' || field === 'eta') {
-      el = document.createElement('input');
-      el.type = 'date';
-      el.value = value;
-      el.className = 'form-control form-control-sm';
-    } else if (field === 'mode') {
-      el = document.createElement('select');
-      el.className = 'form-select form-select-sm';
-      ['AIR', 'SEA', 'TRUCK'].forEach(opt => {
-        const o = document.createElement('option');
-        o.value = o.textContent = opt;
-        if (opt === value) o.selected = true;
-        el.appendChild(o);
-      });
-      if (value && !['AIR', 'SEA', 'TRUCK'].includes(value)) {
-        const o = document.createElement('option');
-        o.value = o.textContent = value;
-        o.selected = true;
-        el.appendChild(o);
-      }
-    } else {
-      el = document.createElement('input');
-      el.type = 'text';
-      el.value = value;
-      el.className = 'form-control form-control-sm';
-    }
-    el.dataset.field = field;
-    td.innerHTML = '';
-    td.appendChild(el);
+  editingTr = tr;
+  const isManual = tr.dataset.isManual === '1';
+  editingKeys = isManual ? ALL_EDIT_FIELDS.slice() : MANUAL_EDIT_FIELDS.slice();
+  renderEditFields(editingKeys);
+  editingKeys.forEach(key => {
+    const td = tr.querySelector('td[data-field="' + key + '"]');
+    const el = document.getElementById('se-' + key);
+    if (el) el.value = td ? (td.dataset.value || '') : '';
   });
-  tr.querySelector('.btn-edit').classList.add('d-none');
-  tr.querySelector('.edit-actions').classList.remove('d-none');
+  const no = tr.querySelector('td[data-field="custom_no"]');
+  document.getElementById('shipment-edit-title').textContent =
+    'Edit: ' + (no ? (no.dataset.value || '') : tr.dataset.entryId);
+  document.getElementById('se-hint').innerHTML = isManual
+    ? 'This row was added manually and has no customs invoice file. Fill in every field here; '
+      + 'Customs Reference Number is the filename text only.'
+    : 'Only manually-filled fields are editable here. Fields synced from the customs invoice '
+      + '(Date, Shipper, POL, Containers, DESCRIPTION, etc.) must be changed via the '
+      + '&ldquo;Edit&rdquo; button on the customs invoice.';
+  const st = document.getElementById('se-status');
+  st.classList.add('d-none');
+  st.textContent = '';
+  if (!shipmentEditModal) {
+    shipmentEditModal = new bootstrap.Modal(document.getElementById('shipment-edit-modal'));
+  }
+  shipmentEditModal.show();
 }
 
-function exitEdit(tr) {
-  tr.querySelectorAll('td[data-field]').forEach(td => {
-    if (td.dataset.html !== undefined) {
-      td.innerHTML = td.dataset.html;
-      delete td.dataset.html;
-    }
-  });
-  tr.querySelector('.btn-edit').classList.remove('d-none');
-  tr.querySelector('.edit-actions').classList.add('d-none');
-  delete tr.dataset.editing;
+function closeShipmentEdit() {
+  if (shipmentEditModal) shipmentEditModal.hide();
+  editingTr = null;
+  editingKeys = [];
 }
 
-function cancelEdit(btn) {
-  exitEdit(btn.closest('tr'));
-}
-
-async function saveRow(btn) {
-  const tr = btn.closest('tr');
-  const id = tr.dataset.entryId;
+async function saveShipmentEdit() {
+  const btn = document.getElementById('btn-save-shipment-edit');
+  const st = document.getElementById('se-status');
+  if (!editingTr) return;
+  const id = editingTr.dataset.entryId;
   const params = new URLSearchParams();
-  tr.querySelectorAll('td[data-field] input, td[data-field] select').forEach(el => {
-    params.append(el.dataset.field, el.value);
+  editingKeys.forEach(key => {
+    const el = document.getElementById('se-' + key);
+    if (el) params.append(key, el.value.trim());
   });
   btn.disabled = true;
   let data;
@@ -555,28 +679,82 @@ async function saveRow(btn) {
     });
     data = await res.json();
   } catch (err) {
-    alert('Save request failed: ' + err);
+    st.textContent = 'Save request failed: ' + err;
+    st.classList.remove('d-none');
     btn.disabled = false;
     return;
   }
   btn.disabled = false;
-  if (!data.ok) { alert(data.error || 'Save failed'); return; }
-
-  tr.querySelectorAll('td[data-field]').forEach(td => {
-    const el = td.querySelector('input, select');
+  if (!data.ok) {
+    st.textContent = data.error || 'Save failed';
+    st.classList.remove('d-none');
+    return;
+  }
+  editingKeys.forEach(key => {
+    const el = document.getElementById('se-' + key);
     if (!el) return;
-    td.dataset.value = el.value;
-    td.innerHTML = displayValue(td.dataset.field, el.value);
-    delete td.dataset.html;
+    const val = el.value.trim();
+    const td = editingTr.querySelector('td[data-field="' + key + '"]');
+    if (!td) return;
+    td.dataset.value = val;
+    td.innerHTML = displayValue(key, val);
   });
-  const updated = tr.querySelector('.cell-updated');
+  const updated = editingTr.querySelector('.cell-updated');
   if (updated && data.updated_at) updated.textContent = data.updated_at;
-  tr.querySelector('.btn-edit').classList.remove('d-none');
-  tr.querySelector('.edit-actions').classList.add('d-none');
-  delete tr.dataset.editing;
+  const tr = editingTr;
+  closeShipmentEdit();
   tr.classList.remove('row-flash');
   void tr.offsetWidth;
   tr.classList.add('row-flash');
+}
+
+// ---- 新增行：直接落一条空记录，随后整行手填 ----
+async function addEmptyRow() {
+  const btn = document.getElementById('btn-add-row');
+  if (btn) btn.disabled = true;
+  let data;
+  try {
+    const res = await fetch('/api/shipments/add', { method: 'POST' });
+    data = await res.json();
+  } catch (err) {
+    alert('Add request failed: ' + err);
+    if (btn) btn.disabled = false;
+    return;
+  }
+  if (!data.ok) {
+    alert(data.error || 'Add failed');
+    if (btn) btn.disabled = false;
+    return;
+  }
+  window.location.href = data.list_url || '/shipments';
+}
+
+// ---- 批量删除：勾选手工空行后删除（仅 Add Row 生成的行可删） ----
+async function deleteSelected() {
+  const boxes = [...document.querySelectorAll('.manual-check:checked')];
+  if (!boxes.length) {
+    alert('Please check at least one manually-added row first');
+    return;
+  }
+  if (!confirm('Delete ' + boxes.length + ' selected row(s)?')) return;
+  const ids = boxes.map(b => b.value).join(',');
+  let data;
+  try {
+    const res = await fetch('/api/shipments/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'ids=' + encodeURIComponent(ids),
+    });
+    data = await res.json();
+  } catch (err) {
+    alert('Delete request failed: ' + err);
+    return;
+  }
+  if (!data.ok) {
+    alert(data.error || 'Delete failed');
+    return;
+  }
+  window.location.reload();
 }
 </script>
 {% endblock %}

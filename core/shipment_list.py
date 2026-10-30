@@ -482,8 +482,8 @@ def _migrate_template_headers(ws: Any) -> None:
     if str(ws["W1"].value or "").strip() != "ID" or ws["Y1"].value:
         return
     src = ws["W1"]
-    ws["W1"].value = "机器柜"
-    ws["X1"].value = "辅料柜"
+    ws["W1"].value = "Machine Cabinet"
+    ws["X1"].value = "Aux Cabinet"
     ws["Y1"].value = "ID"
     for dst in (ws["X1"], ws["Y1"]):
         dst.font = copy(src.font)

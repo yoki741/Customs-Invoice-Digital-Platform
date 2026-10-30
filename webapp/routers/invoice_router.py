@@ -41,16 +41,16 @@ from ..models import (
 )
 from ..service import (
     ENTRY_EDIT_FIELDS,
-    ENTRY_FIELD_LABELS,
+    MANUAL_EDIT_FIELDS,
+    add_empty_shipment_row,
     build_for_edit,
     build_snapshot,
     can_edit_ref_id,
-    editable_entry_fields,
     export_invoices,
     first_generation_ids,
+    rebuild_shipment_month,
     record_failure,
     record_manual_save,
-    reset_manual_state,
     save_manual_values,
     update_shipment_entry,
 )
@@ -428,7 +428,8 @@ async def shipment_list_page(
             "page": page,
             "pages": max((total + size - 1) // size, 1),
             "total": total,
-            "editable_fields": list(editable_entry_fields(user)),
+            "manual_edit_fields": list(MANUAL_EDIT_FIELDS),
+            "all_edit_fields": list(ENTRY_EDIT_FIELDS),
             "current_month": current_month,
             "download_name": path.name if path and path.exists() else "",
             "download_url": (
@@ -438,6 +439,31 @@ async def shipment_list_page(
             ),
         },
     )
+
+
+@router.post("/api/shipments/add")
+async def shipment_add(
+    user: User = Depends(require_type1),
+    db: Session = Depends(get_db),
+) -> object:
+    """Shipment List 新增行：直接落一条空记录，全部字段行内手填。
+
+    不生成报关单文件、不关联发票；报关单文件名（Customs Reference Number）
+    为纯文本手填。权限分割：仅第一类 / 管理员可新增（第三类不可新增）。
+    """
+    try:
+        entry, info = add_empty_shipment_row(db, user)
+    except Exception as exc:  # pragma: no cover
+        logger.exception("新增装柜列表空行失败")
+        return JSONResponse({"ok": False, "error": f"Add row failed: {exc}"}, status_code=500)
+
+    audit(
+        db,
+        user,
+        "shipment.add",
+        f"Added empty shipment row #{entry.id}",
+    )
+    return JSONResponse({"ok": True, **info})
 
 
 @router.get("/api/shipment-list/download")
@@ -543,6 +569,51 @@ async def shipment_entry_update(
         f"Shipment List inline edit {entry.custom_no or entry_id}: {detail or 'no changes'}",
     )
     return JSONResponse(result)
+
+
+@router.post("/api/shipments/delete")
+async def shipment_delete_selected(
+    ids: str = Form(""),
+    user: User = Depends(require_type1),
+    db: Session = Depends(get_db),
+) -> object:
+    """批量删除 Shipment List 手工新增的空行（仅 Add Row 生成的行可删）。
+
+    勾选的行中只删除 is_manual 的空行；有报关单文件的普通行跳过不删（报关发票
+    本身另有删除/重做入口）。权限分割：新增行仅第一类 / 管理员可建，删除同样
+    限定第一类 / 管理员。删除后重建涉及的月份装柜列表 Excel。
+    """
+    entry_ids = _parse_ids(ids)
+    if not entry_ids:
+        return JSONResponse(
+            {"ok": False, "error": "Please select the rows to delete first"},
+            status_code=400,
+        )
+
+    entries = (
+        db.query(ShipmentListEntry)
+        .filter(ShipmentListEntry.id.in_(entry_ids))
+        .all()
+    )
+    manual = [e for e in entries if e.is_manual]
+    skipped = len(entries) - len(manual)
+    months = {e.month for e in manual if e.month}
+
+    for e in manual:
+        db.delete(e)
+    db.commit()
+    for month in months:
+        rebuild_shipment_month(db, month)
+
+    audit(
+        db,
+        user,
+        "shipment.delete",
+        f"Deleted {len(manual)} manual shipment row(s) (skipped {skipped} non-manual)",
+    )
+    return JSONResponse(
+        {"ok": True, "deleted": len(manual), "skipped": skipped, "list_months": sorted(months)}
+    )
 
 
 @router.get("/api/shipments/download-files")
@@ -756,44 +827,6 @@ async def invoice_manual_save(
     )
 
 
-@router.get("/api/invoices/reset-plan")
-async def invoice_reset_plan(
-    ids: str = "",
-    user: User = Depends(require_type1_or_2),
-    db: Session = Depends(get_db),
-) -> object:
-    """一键重置计划（清空 / 恢复上个版本），供前端确认弹窗展示，不落库。"""
-    invoices = _load_invoices(db, _parse_ids(ids))
-    if not invoices:
-        return JSONResponse({"ok": False, "error": "Invoice not found"}, status_code=404)
-    plan = reset_manual_state(db, invoices, user, apply=False)
-    plan["ok"] = True
-    return JSONResponse(plan)
-
-
-@router.post("/api/invoices/reset")
-async def invoice_reset(
-    ids: str = "",
-    user: User = Depends(require_type1_or_2),
-    db: Session = Depends(get_db),
-) -> object:
-    """一键重置编辑页填写内容：一次生成→清空；旧版报关单→恢复成上个版本。"""
-    invoices = _load_invoices(db, _parse_ids(ids))
-    if not invoices:
-        return JSONResponse({"ok": False, "error": "Invoice not found"}, status_code=404)
-    result = reset_manual_state(db, invoices, user, apply=True)
-    audit(
-        db,
-        user,
-        "manual.reset",
-        f"Reset manual fields {', '.join(i.invoice_no or str(i.id) for i in invoices)}"
-        f" ({result['mode']}, target version {result['target_version'] or '-'})",
-    )
-    result["ok"] = True
-    result["saved_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    return JSONResponse(result)
-
-
 @router.get("/api/download")
 async def download(
     folder: str = "",
@@ -883,7 +916,7 @@ async def file_versions(
 async def file_history(
     folder: str = "",
     name: str = "",
-    user: User = Depends(require_any),
+    user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
     """某文件的修改记录：历次生成 + 编辑保存（按时间线合并）。"""
@@ -1076,7 +1109,7 @@ def _safe_form_values(raw: str) -> str:
 @router.get("/api/files/backup")
 async def file_backup(
     id: int = 0,
-    user: User = Depends(require_any),
+    user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> object:
     """下载某次生成前的留底文件（内部存档，按记录号定位）。"""

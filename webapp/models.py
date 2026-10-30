@@ -227,6 +227,10 @@ class ShipmentListEntry(Base):
     machine_cabinet: Mapped[str] = mapped_column(String(64), default="")
     aux_cabinet: Mapped[str] = mapped_column(String(64), default="")
     ref_id: Mapped[str] = mapped_column(String(128), default="")
+    # 手工新增行：无源文件 / 无报关单，全部字段由行内编辑手填
+    is_manual: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Customs Reference Number（报关单文件名，仅手工新增行手填的纯文本，无真实文件）
+    custom_ref: Mapped[str] = mapped_column(String(255), default="")
     invoice_ids: Mapped[str] = mapped_column(Text, default="[]")
     created_by: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -332,7 +336,8 @@ def _migrate_check_fields() -> None:
 
 
 def _migrate_shipment_fields() -> None:
-    """为已有 shipment_list_entries 表补上柜型 / CBM / 机器柜 / 辅料柜 / source_key / ref_id 列（SQLite ALTER）。"""
+    """为已有 shipment_list_entries 表补上柜型 / CBM / 机器柜 / 辅料柜 / source_key /
+    ref_id / is_manual / custom_ref 列（SQLite ALTER）。"""
     with engine.begin() as conn:
         existing = {
             row[1]
@@ -347,6 +352,8 @@ def _migrate_shipment_fields() -> None:
             ("aux_cabinet", "VARCHAR(64) DEFAULT ''"),
             ("source_key", "VARCHAR(512) DEFAULT ''"),
             ("ref_id", "VARCHAR(128) DEFAULT ''"),
+            ("is_manual", "BOOLEAN DEFAULT 0"),
+            ("custom_ref", "VARCHAR(255) DEFAULT ''"),
         ):
             if name not in existing:
                 conn.exec_driver_sql(
