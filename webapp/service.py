@@ -685,38 +685,43 @@ def record_shipment_list(
 # ---- Shipment List 新增行（纯手工空行） ----
 
 
-def add_empty_shipment_row(
+def create_manual_shipment_row(
     db: Session,
+    payload: dict[str, Any],
     user: Optional[User] = None,
 ) -> tuple[ShipmentListEntry, dict[str, Any]]:
-    """Shipment List 新增行：直接落一条空记录，全部字段行内手填。
+    """Shipment List 新增行：按表单内容落一条手工空行（is_manual）。
 
     不生成报关单文件、不关联 Invoice / ExportJob / 源文件；报关单文件名
     （Customs Reference Number，custom_ref）为纯文本手填，无真实文件。
-    顺带刷新当月装柜列表 Excel。
+    字段落库复用 :func:`update_shipment_entry`（含 ETA 自动推算、月份归属、
+    月度 Excel 重建），因此「点 Add Row → 填表 → 保存」一次性写库。
 
     Args:
         db: 数据库会话。
+        payload: 全量字段值（缺键视为空）。
         user: 操作人。
 
     Returns:
-        (新建记录, 结果信息含 entry_id / list_month / list_url)。
+        (新建记录, 结果信息含 entry_id / list_month / list_url / message)。
     """
-    month = month_of(None)
     entry = ShipmentListEntry(
-        month=month,
+        month=month_of(None),
         is_manual=True,
         created_by=user.username if user else None,
     )
     db.add(entry)
     db.commit()
-    path = rebuild_shipment_month(db, month)
-    logger.info("装柜列表新增空行 by {}", user.username if user else "-")
+    result = update_shipment_entry(db, entry, payload, user)
+    month = entry.month or month_of(None)
+    logger.info("装柜列表新增行 #{} by {}", entry.id, user.username if user else "-")
     return entry, {
         "entry_id": entry.id,
         "list_month": month,
-        "list_filename": path.name,
+        "list_filename": month_path(month).name,
         "list_url": f"/shipments?month={month}",
+        "message": result["message"],
+        "changes": result["changes"],
     }
 
 
@@ -724,10 +729,10 @@ def add_empty_shipment_row(
 
 
 def can_edit_shipment_info(user: Optional[User]) -> bool:
-    """装柜列表补充信息（导出弹窗字段）仅第一 / 第三类与管理员可写。
+    """装柜列表补充信息（导出弹窗字段）仅第一类与管理员可写。
 
-    权限分割：第二类账号的编辑权限只覆盖报关发票本身（含重新生成），
-    不得顺带改写装柜列表的手动字段。
+    权限分割：第二类账号的编辑权限只覆盖报关发票本身（含重新生成）；
+    第三类账号仅可查看 / 下载装柜列表，不得改写任何字段。
 
     Args:
         user: 当前用户；None（系统调用）视为允许。
@@ -735,11 +740,11 @@ def can_edit_shipment_info(user: Optional[User]) -> bool:
     Returns:
         是否可写装柜补充信息。
     """
-    return user is None or user.role != ROLE_TYPE2
+    return user is None or user.role in (ROLE_TYPE1, ROLE_ADMIN)
 
 
 def can_edit_ref_id(user: Optional[User]) -> bool:
-    """ID（ref_id）字段第一类 / 第三类账号与管理员可改（权限分割）。
+    """ID（ref_id）字段第一类账号与管理员可改（权限分割）。
 
     Args:
         user: 当前用户；None（系统调用）视为允许。
@@ -747,7 +752,7 @@ def can_edit_ref_id(user: Optional[User]) -> bool:
     Returns:
         是否可写 ID 字段。
     """
-    return user is None or user.role in (ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN)
+    return user is None or user.role in (ROLE_TYPE1, ROLE_ADMIN)
 
 
 #: 行内编辑可写字段（与 ShipmentListEntry 列名一致）
@@ -769,11 +774,12 @@ MANUAL_EDIT_FIELDS: tuple[str, ...] = (
 def editable_entry_fields(user: Optional[User], is_manual: bool = False) -> tuple[str, ...]:
     """按角色返回 Shipment List 行内可编辑字段（权限分割）。
 
-    Shipment List 行内编辑对第一类 / 第三类 / 管理员开放手动填入字段（ID、
-    Package、ETD、ETA、VESSEL、Carrier、Container Type、CBM）；报关发票的
-    整张编辑通过「Edit」按钮跳转到发票明细编辑页（仅第一类 / 管理员）。手工新增
-    的空行（is_manual）无源文件可跳转，因此整行全部字段（含 Customs Reference
-    Number 文件名）都在行内手填。第二类账号看不见装柜列表，无可编辑字段。
+    Shipment List 行内编辑对第一类 / 管理员开放手动填入字段（ID、Package、
+    ETD、ETA、VESSEL、Carrier、Container Type、CBM）；报关发票的整张编辑
+    通过「Edit」按钮跳转到发票明细编辑页（仅第一类 / 管理员）。手工新增的空行
+    （is_manual）无源文件可跳转，因此整行全部字段（含 Customs Reference
+    Number 文件名）都在行内手填。第二类账号看不见装柜列表；第三类账号仅可
+    查看 / 下载，无任何可编辑字段。
 
     Args:
         user: 当前用户；None（系统调用）视为可编辑。
@@ -782,7 +788,7 @@ def editable_entry_fields(user: Optional[User], is_manual: bool = False) -> tupl
     Returns:
         可编辑字段名元组（:data:`ENTRY_EDIT_FIELDS` 的子集）。
     """
-    if user is None or user.role in (ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN):
+    if user is None or user.role in (ROLE_TYPE1, ROLE_ADMIN):
         if is_manual:
             return ENTRY_EDIT_FIELDS
         return MANUAL_EDIT_FIELDS

@@ -42,7 +42,7 @@ from ..models import (
 from ..service import (
     ENTRY_EDIT_FIELDS,
     MANUAL_EDIT_FIELDS,
-    add_empty_shipment_row,
+    create_manual_shipment_row,
     build_for_edit,
     build_snapshot,
     can_edit_ref_id,
@@ -223,6 +223,7 @@ async def invoice_edit(
     request: Request,
     ids: str = "",
     back: str = "",
+    source: str = "",
     user: User = Depends(require_type1_or_2),
     db: Session = Depends(get_db),
 ) -> object:
@@ -266,6 +267,8 @@ async def invoice_edit(
             "ids": ",".join(str(i.id) for i in invoices),
             "first": invoices[0],
             "back_link": back_link,
+            # 从 Shipment List 的 Edit 按钮跳入时不弹装柜补充信息窗口（来源区分）
+            "from_shipment": source == "shipment",
             "form_fields": [f for f in EDITABLE_FIELDS] + list(EXTRA_FIELDS),
         },
     )
@@ -335,7 +338,7 @@ async def shipment_list_page(
     """装柜列表（Shipment List）：第一类与第三类、管理员可见（第二类不可见）。
 
     权限分割：第一类账号 / 管理员拥有全部编辑权限（含报关单编辑入口）；
-    第三类账号仅手动填入字段（含 ID）可改，报关单文件只预览。
+    第三类账号仅可查看 / 下载，无编辑权限。
     """
     from core.shipment_list import month_path
 
@@ -394,7 +397,19 @@ async def shipment_list_page(
         # 发票组合，保证编辑页与首次生成一致
         key = (folder, name)
         if name and key not in first_ids:
-            first_ids[key] = first_generation_ids(db, folder, name)
+            ids = first_generation_ids(db, folder, name)
+            # 首次生成的发票可能已被删除/重导，此时回退到当前行的 invoice_ids，
+            # 避免编辑入口指向不存在的发票（"No selected invoice was found"）
+            if ids:
+                wanted = {int(x) for x in ids.split(",")}
+                existing = {
+                    iid for (iid,) in db.query(Invoice.id).filter(
+                        Invoice.id.in_(wanted)
+                    ).all()
+                }
+                if existing != wanted:
+                    ids = ""
+            first_ids[key] = ids
         edit_ids = first_ids.get(key, "") if name else ""
         if name and not edit_ids:
             try:
@@ -443,25 +458,34 @@ async def shipment_list_page(
 
 @router.post("/api/shipments/add")
 async def shipment_add(
-    user: User = Depends(require_type1_or_3),
+    request: Request,
+    user: User = Depends(require_type1),
     db: Session = Depends(get_db),
 ) -> object:
-    """Shipment List 新增行：直接落一条空记录，全部字段行内手填。
+    """Shipment List 新增行：按表单内容落一条手工空行（填完保存才写库）。
 
     不生成报关单文件、不关联发票；报关单文件名（Customs Reference Number）
-    为纯文本手填。权限分割：第一类 / 第三类 / 管理员可新增。
+    为纯文本手填。权限分割：仅第一类 / 管理员可新增（第三类只查看 / 下载）。
     """
+    form = await request.form()
+    payload = {field: form.get(field, "") for field in ENTRY_EDIT_FIELDS}
     try:
-        entry, info = add_empty_shipment_row(db, user)
+        entry, info = create_manual_shipment_row(db, payload, user)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     except Exception as exc:  # pragma: no cover
         logger.exception("新增装柜列表空行失败")
         return JSONResponse({"ok": False, "error": f"Add row failed: {exc}"}, status_code=500)
 
+    detail = "; ".join(
+        f"{c['label']} {c['old'] or '(blank)'}→{c['new'] or '(blank)'}"
+        for c in info.get("changes", [])
+    )
     audit(
         db,
         user,
         "shipment.add",
-        f"Added empty shipment row #{entry.id}",
+        f"Added shipment row #{entry.id}: {detail or 'blank'}",
     )
     return JSONResponse({"ok": True, **info})
 
@@ -497,12 +521,12 @@ async def shipment_ref_id_save(
     mode: str = Form(""),
     q: str = Form(""),
     page: str = Form(""),
-    user: User = Depends(require_type1_or_3),
+    user: User = Depends(require_type1),
     db: Session = Depends(get_db),
 ) -> object:
     """保存装柜列表某行手动填写的 ID（仅存数据库，不写入 Excel）。
 
-    权限分割：ID 由第一类 / 第三类账号与管理员可改。
+    权限分割：ID 由第一类账号与管理员可改（第三类只查看 / 下载）。
     """
     from urllib.parse import urlencode
 
@@ -539,7 +563,7 @@ async def shipment_ref_id_save(
 async def shipment_entry_update(
     entry_id: int,
     request: Request,
-    user: User = Depends(require_type1_or_3),
+    user: User = Depends(require_type1),
     db: Session = Depends(get_db),
 ) -> object:
     """Shipment List 行内编辑保存：全量提交该行，同步 .xlsm 与发票明细。
@@ -574,14 +598,14 @@ async def shipment_entry_update(
 @router.post("/api/shipments/delete")
 async def shipment_delete_selected(
     ids: str = Form(""),
-    user: User = Depends(require_type1_or_3),
+    user: User = Depends(require_type1),
     db: Session = Depends(get_db),
 ) -> object:
     """批量删除 Shipment List 手工新增的空行（仅 Add Row 生成的行可删）。
 
     勾选的行中只删除 is_manual 的空行；有报关单文件的普通行跳过不删（报关发票
-    本身另有删除/重做入口）。权限分割：新增行第一类 / 第三类 / 管理员可建，删除
-    同样限定第一类 / 第三类 / 管理员。删除后重建涉及的月份装柜列表 Excel。
+    本身另有删除/重做入口）。权限分割：仅第一类 / 管理员可新增与删除（第三类只
+    查看 / 下载）。删除后重建涉及的月份装柜列表 Excel。
     """
     entry_ids = _parse_ids(ids)
     if not entry_ids:
@@ -705,7 +729,7 @@ async def shipment_info_save(
     carrier: str = Form(""),
     container_type: str = Form(""),
     cbm: str = Form(""),
-    user: User = Depends(require_type1_or_3),
+    user: User = Depends(require_type1),
     db: Session = Depends(get_db),
 ) -> object:
     """编辑页「装柜列表信息」独立窗口：直接更新装柜记录（无需重新导出）。

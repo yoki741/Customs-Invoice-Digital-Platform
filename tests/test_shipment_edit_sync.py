@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""端到端：Shipment List 行内编辑 → 同步 .xlsm / 修改记录 / 发票明细。
+"""端到端：Shipment List 行内编辑（手动字段弹窗）→ 同步 .xlsm / 修改记录。
 
-覆盖计划中的手工验证点：
-1. 改柜号/日期/Package/GW/NW → .xlsm 对应单元格改写 + file_history 留底 +
-   修改记录时间线出现「编辑保存」含 old→new + 发票明细 Container No. 同步；
-2. 改 ETD 等平台-only 字段 → 不碰文件、不插修改记录、月度 Excel 照常重建；
+覆盖当前权限分割下的手工验证点：
+1. 非手工行行内编辑仅手动字段（Package/ETD/ETA/VESSEL/Carrier/柜型/CBM/ID）；
+   其中 Package 映射到 .xlsm PKL1 A24 → 改写文件 + file_history 留底 +
+   修改记录时间线出现「编辑保存」含 old→new；越权字段（Date/柜号/NW/GW/
+   Mode/POL 等）服务端保留原值、不碰文件、不写修改记录；
+2. 改 ETD/ETA/VESSEL 等平台-only 字段 → 不碰文件、不插修改记录、月度 Excel 照常重建；
 3. 改 ID → 明细页 ID 实时映射生效；
 4. 平台改写后的文件回传校验不误报（比对带 sha256 的 save 行）；
 5. 批量下载 zip 含 .xlsm。
@@ -122,6 +124,11 @@ def main() -> None:
         )
     assert r.status_code == 200, r.text[:300]
 
+    db = SessionLocal()
+    inv = db.query(Invoice).filter(Invoice.invoice_no == "D202609007").first()
+    assert inv is not None, "样例发票应存在"
+    inv_id = inv.id
+
     payload = {
         "form": {
             "date": "2026-09-10",
@@ -134,14 +141,13 @@ def main() -> None:
             "flight_no": "",
         }
     }
-    r = client.post("/api/invoices/export", params={"ids": "1"}, json=payload)
+    r = client.post("/api/invoices/export", params={"ids": str(inv_id)}, json=payload)
     assert r.status_code == 200 and r.json()["ok"], r.text[:500]
     exported = r.json()
     folder, filename = exported["folder"], exported["filename"]
     out_path = Path(exported["path"])
     assert out_path.exists()
 
-    db = SessionLocal()
     job = db.query(ExportJob).order_by(ExportJob.id.desc()).first()
     entry = (
         db.query(ShipmentListEntry)
@@ -152,29 +158,36 @@ def main() -> None:
     assert entry is not None, "导出后应有装柜记录"
     entry_id = entry.id
 
+    # 越权字段的导出原值（行内编辑对非手工行不得改动，保存后应原样保留）
+    keep = {
+        f: getattr(entry, f)
+        for f in ("date", "container_1", "container_2", "nw_kg", "gw_kg", "mode", "pol")
+    }
+    cells_before = _xlsm_cells(out_path)
+
     hist_dir = ROOT / "data" / "file_history" / folder
     hist_before = len(list(hist_dir.glob("*.xlsm"))) if hist_dir.exists() else 0
 
-    # ---- 1. 行内编辑：柜号/日期/Package/GW/NW/ETD/ID 等全量提交 ----
+    # ---- 1. 行内编辑：仅手动字段（Package/ETD/ETA/VESSEL/ID）可写 ----
     form = {
-        "date": "2026-09-12",
+        "date": "2026-09-12",          # 越权字段，应被忽略
         "fty_inv": entry.fty_inv or "",
         "shipper": entry.shipper or "",
         "est_vco": entry.est_vco or "",
         "custom_no": entry.custom_no or "",
-        "package": "50",
+        "package": "50",               # 手动字段且映射 .xlsm PKL1 A24
         "blading": entry.blading or "",
-        "container_1": "NEWCONT1/SEAL1",
+        "container_1": "NEWCONT1/SEAL1",  # 越权字段，应被忽略
         "container_2": "",
         "container_3": "",
         "container_4": "",
-        "nw_kg": "1234",
-        "gw_kg": "2000",
+        "nw_kg": "1234",               # 越权字段，应被忽略
+        "gw_kg": "2000",               # 越权字段，应被忽略
         "description": entry.description or "",
-        "mode": "SEA",
+        "mode": "SEA",                 # 越权字段，应被忽略
         "etd": "2026-09-20",
         "eta": "",
-        "pol": "NINGBO, CHINA",
+        "pol": "NINGBO, CHINA",        # 越权字段，应被忽略
         "vessel": "NEW VESSEL",
         "carrier": entry.carrier or "",
         "container_type": entry.container_type or "",
@@ -185,29 +198,28 @@ def main() -> None:
     assert r.status_code == 200, r.text[:500]
     result = r.json()
     assert result["ok"], result
-    assert result["xlsm_synced"] is True, result
+    assert result["xlsm_synced"] is True, result  # Package 改写 .xlsm
     print("[OK] 行内编辑保存:", result["message"])
 
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.date == "2026-09-12", entry.date
-    assert entry.container_1 == "NEWCONT1/SEAL1"
-    assert (entry.container_2 or "") == ""
-    assert entry.eta == "2026-09-28", entry.eta  # SEA: ETD+8 自动推算
+    assert entry.package == 50, entry.package
     assert entry.vessel == "NEW VESSEL" and entry.ref_id == "TEST-001"
-    assert float(entry.nw_kg) == 1234 and float(entry.gw_kg) == 2000
-    assert entry.package == 50
-    print("[OK] 落库 + ETA 自动推算 (ETD 2026-09-20 → ETA 2026-09-28)")
+    assert entry.eta == "2026-09-28", entry.eta  # TRUCK: ETD+8 自动推算
+    # 越权字段保留导出原值
+    for f, val in keep.items():
+        assert getattr(entry, f) == val, f"{f} 不得被行内编辑改动"
+    assert entry.date == "2026-09-10", entry.date
+    print("[OK] 手动字段生效 + ETA 自动推算；Date/柜号/NW/GW/Mode/POL 保留原值")
 
     cells = _xlsm_cells(out_path)
-    assert cells["J9"] == "2026-09-12", cells["J9"]
-    assert cells["B17"] == "by Sea", cells["B17"]
-    assert cells["containers"][0] == "NEWCONT1/SEAL1", cells["containers"]
-    assert cells["containers"][1] in (None, ""), cells["containers"]
-    assert cells["PKL1_A24"] == 50, cells["PKL1_A24"]
-    assert float(cells["PKL1_K24"]) == 2000, cells["PKL1_K24"]
-    assert abs(cells["G_sum"] - 1234) < 0.01, cells["G_sum"]
-    print("[OK] .xlsm 改写: J9/B17/柜号区/PKL1 A24+K24/G 列合计", cells["G_sum"])
+    assert cells["PKL1_A24"] == 50, cells["PKL1_A24"]  # Package 同步
+    assert cells["J9"] == cells_before["J9"], cells["J9"]  # Date 未同步
+    assert cells["B17"] == cells_before["B17"], cells["B17"]  # Mode 未同步
+    assert cells["containers"] == cells_before["containers"], cells["containers"]
+    assert cells["PKL1_K24"] == cells_before["PKL1_K24"], cells["PKL1_K24"]  # GW 未同步
+    assert cells["G_sum"] == cells_before["G_sum"], cells["G_sum"]  # NW 未同步
+    print("[OK] .xlsm 仅改写 PKL1 A24（Package），其余单元格不动")
 
     hist_after = len(list(hist_dir.glob("*.xlsm"))) if hist_dir.exists() else 0
     assert hist_after == hist_before + 1, (hist_before, hist_after)
@@ -223,9 +235,10 @@ def main() -> None:
     assert save_row.sha256 and save_row.backup_path, save_row.__dict__
     assert Path(save_row.backup_path).exists()
     snapshot = json.loads(save_row.form_values or "{}")
-    assert snapshot.get("container_info") == "NEWCONT1/SEAL1", snapshot
-    assert snapshot.get("date") == "2026-09-12", snapshot
-    print("[OK] 修改记录 save 行：sha256 + 留底 + 快照")
+    changed_keys = {c["key"] for c in snapshot.get("_changes") or []}
+    assert "package" in changed_keys, changed_keys
+    assert "date" not in changed_keys and "container_1" not in changed_keys, changed_keys
+    print("[OK] 修改记录 save 行：sha256 + 留底 + 仅 Package 变更快照")
 
     r = client.get("/api/files/history", params={"folder": folder, "name": filename})
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
@@ -234,22 +247,18 @@ def main() -> None:
     assert last["kind"] == "save", last
     assert last["backup"], "save 行带留底下载"
     changed_labels = {c["label"] for c in last["changes"]}
-    assert "Container 1" in changed_labels, changed_labels
-    assert "Date" in changed_labels, changed_labels
+    assert "Package" in changed_labels, changed_labels
+    assert "Date" not in changed_labels and "Container 1" not in changed_labels, changed_labels
     assert any(c["old"] and c["new"] for c in last["changes"]), last["changes"]
-    print("[OK] 历史时间线：编辑保存 + 字段 old→new:", changed_labels)
+    print("[OK] 历史时间线：编辑保存 + Package old→new:", changed_labels)
 
-    # 发票明细 Container No. / ID 同步
-    invoice = db.get(Invoice, 1)
-    manual = json.loads(invoice.manual_values or "{}")
-    assert manual.get("container_info") == "NEWCONT1/SEAL1", manual
-    print("[OK] 发票明细 manual_values 柜号已同步")
-    r = client.get("/details", params={"invoice_id": 1})
+    # 发票明细 ID 同步（柜号已不再可由行内编辑改动，manual_values 保持原值）
+    r = client.get("/details", params={"invoice_id": inv_id})
     assert r.status_code == 200
-    assert "NEWCONT1/SEAL1" in r.text and "TEST-001" in r.text, "明细页展示新柜号与 ID"
-    print("[OK] 明细页 Container No. 与 ID 生效")
+    assert "TEST-001" in r.text, "明细页展示新 ID"
+    print("[OK] 明细页 ID 实时映射生效")
 
-    # ---- 2. 平台-only 字段（ETD/VESSEL）：不碰文件、不插记录 ----
+    # ---- 2. 平台-only 字段（ETD/ETA/VESSEL）：不碰文件、不插记录 ----
     saves_before = (
         db.query(ExportFileVersion)
         .filter(ExportFileVersion.kind == "save", ExportFileVersion.folder == folder)
@@ -268,7 +277,7 @@ def main() -> None:
         .count()
     )
     assert saves_after == saves_before, (saves_before, saves_after)
-    assert _xlsm_cells(out_path)["containers"][0] == "NEWCONT1/SEAL1"
+    assert _xlsm_cells(out_path)["PKL1_A24"] == 50
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
     assert entry.etd == "2026-09-25" and entry.eta == "2026-10-01"
@@ -303,7 +312,7 @@ def main() -> None:
     print("[OK] 月度 Excel 存在:", month_file.name)
 
     db.close()
-    print("\nShipment List 行内编辑三路同步测试全部通过")
+    print("\nShipment List 行内编辑同步测试全部通过")
 
 
 if __name__ == "__main__":

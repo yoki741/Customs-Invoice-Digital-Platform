@@ -69,8 +69,9 @@
   .shipments-table td:first-child {
     border-left: 0;
   }
-  /* Fty Inv 保留换行展示，其余字段随表格单行（nowrap） */
-  .shipments-table td.small[data-field="fty_inv"] { white-space: normal; }
+  /* Fty Inv 保留换行展示，其余字段随表格单行（nowrap）；列宽放宽以免折行 */
+  .shipments-table td.small[data-field="fty_inv"] { white-space: normal; min-width: 160px; }
+  .shipments-table th.col-fty { min-width: 160px; }
   /* 操作列（Edit）冻结在最右（Excel 冻结右窗格效果），横向滚动时始终可见 */
   .shipments-table .sticky-actions {
     position: sticky;
@@ -130,9 +131,9 @@
         <a class="btn btn-outline-secondary btn-sm" href="/shipments">Reset</a>
       </div>
       <div class="col-auto ms-auto d-flex gap-2">
-        {% if user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
+        {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
         <button type="button" class="btn btn-primary btn-sm" id="btn-add-row"
-                onclick="addEmptyRow()" title="Add an empty row and fill in every field manually">
+                onclick="openShipmentAdd()" title="Add a row and fill in every field manually">
           Add Row</button>
         <button type="button" class="btn btn-outline-danger btn-sm" id="btn-delete-rows"
                 onclick="deleteSelected()" title="Delete checked manually-added rows">
@@ -165,7 +166,7 @@
             </th>
             <th class="sticky-col">Customs Reference #</th>
             <th>Date</th>
-            <th>Fty Inv</th>
+            <th class="col-fty">Fty Inv</th>
             <th>Shipper</th>
             <th>EST/VCO</th>
             <th>Custom Invoice #</th>
@@ -198,7 +199,7 @@
               {% if r.file_exists %}
               <input type="checkbox" class="form-check-input file-check m-0" value="{{ r.id }}"
                      title="Check to download the customs invoice file">
-              {% elif r.is_manual %}
+              {% elif r.is_manual and user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
               <input type="checkbox" class="form-check-input manual-check m-0" value="{{ r.id }}"
                      title="Check to delete this manually-added row">
               {% endif %}
@@ -211,7 +212,7 @@
                    title="Preview {{ r.file_name }}">{{ r.file_name }}</a>
                 <span class="ms-auto d-inline-flex gap-1 flex-shrink-0">
                   {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] and r.edit_ids %}
-                  <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.edit_ids }}"
+                  <a class="btn btn-sm btn-outline-primary py-0" href="/invoices/edit?ids={{ r.edit_ids }}&source=shipment"
                      title="Edit customs invoice (opens the first-generation edit page)">Edit</a>
                   {% endif %}
                   <a class="btn btn-sm btn-outline-secondary py-0" href="#" data-folder="{{ r.file_folder }}"
@@ -265,7 +266,9 @@
               {{ r.updated_at|localtime('%Y-%m-%d %H:%M') if r.updated_at else '-' }}
             </td>
             <td class="text-end text-nowrap sticky-actions">
+              {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
               <button class="btn btn-sm btn-outline-primary py-0 btn-edit" onclick="openShipmentEdit(this)">Edit</button>
+              {% endif %}
             </td>
           </tr>
           {% else %}
@@ -584,6 +587,7 @@ function displayValue(field, value) {
 let shipmentEditModal = null;
 let editingTr = null;
 let editingKeys = [];   // 当前弹窗实际渲染（可编辑）的字段名
+let addingNewRow = false;   // Add Row 模式：先填表，保存时才落库
 
 function fieldHtml(key, label, type, ph) {
   const id = 'se-' + key;
@@ -591,7 +595,7 @@ function fieldHtml(key, label, type, ph) {
   if (type === 'textarea') {
     input = '<textarea class="form-control form-control-sm" id="' + id + '" rows="2"></textarea>';
   } else if (type === 'date') {
-    input = '<input type="date" class="form-control form-control-sm" id="' + id + '">';
+    input = '<input type="text" placeholder="yyyy-mm-dd" class="form-control form-control-sm" id="' + id + '">';
   } else if (type === 'number') {
     input = '<input type="number" step="any" min="0" class="form-control form-control-sm" id="' + id + '">';
   } else if (type === 'mode') {
@@ -621,6 +625,7 @@ function renderEditFields(keys) {
 function openShipmentEdit(btn) {
   const tr = btn.closest('tr');
   editingTr = tr;
+  addingNewRow = false;
   const isManual = tr.dataset.isManual === '1';
   editingKeys = isManual ? ALL_EDIT_FIELDS.slice() : MANUAL_EDIT_FIELDS.slice();
   renderEditFields(editingKeys);
@@ -651,13 +656,36 @@ function closeShipmentEdit() {
   if (shipmentEditModal) shipmentEditModal.hide();
   editingTr = null;
   editingKeys = [];
+  addingNewRow = false;
+}
+
+// ---- 新增行：先弹出空白表单，填完保存时才落库 ----
+function openShipmentAdd() {
+  editingTr = null;
+  addingNewRow = true;
+  editingKeys = ALL_EDIT_FIELDS.slice();
+  renderEditFields(editingKeys);
+  editingKeys.forEach(key => {
+    const el = document.getElementById('se-' + key);
+    if (el) el.value = '';
+  });
+  document.getElementById('shipment-edit-title').textContent = 'Add Row';
+  document.getElementById('se-hint').innerHTML =
+    'This row will be added manually and has no customs invoice file. '
+    + 'Fill in every field here; Customs Reference # is the filename text only.';
+  const st = document.getElementById('se-status');
+  st.classList.add('d-none');
+  st.textContent = '';
+  if (!shipmentEditModal) {
+    shipmentEditModal = new bootstrap.Modal(document.getElementById('shipment-edit-modal'));
+  }
+  shipmentEditModal.show();
 }
 
 async function saveShipmentEdit() {
   const btn = document.getElementById('btn-save-shipment-edit');
   const st = document.getElementById('se-status');
-  if (!editingTr) return;
-  const id = editingTr.dataset.entryId;
+  if (!editingTr && !addingNewRow) return;
   const params = new URLSearchParams();
   editingKeys.forEach(key => {
     const el = document.getElementById('se-' + key);
@@ -666,7 +694,10 @@ async function saveShipmentEdit() {
   btn.disabled = true;
   let data;
   try {
-    const res = await fetch('/api/shipments/' + id + '/update', {
+    const url = addingNewRow
+      ? '/api/shipments/add'
+      : '/api/shipments/' + editingTr.dataset.entryId + '/update';
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
@@ -682,6 +713,10 @@ async function saveShipmentEdit() {
   if (!data.ok) {
     st.textContent = data.error || 'Save failed';
     st.classList.remove('d-none');
+    return;
+  }
+  if (addingNewRow) {
+    window.location.href = data.list_url || '/shipments';
     return;
   }
   editingKeys.forEach(key => {
@@ -700,27 +735,6 @@ async function saveShipmentEdit() {
   tr.classList.remove('row-flash');
   void tr.offsetWidth;
   tr.classList.add('row-flash');
-}
-
-// ---- 新增行：直接落一条空记录，随后整行手填 ----
-async function addEmptyRow() {
-  const btn = document.getElementById('btn-add-row');
-  if (btn) btn.disabled = true;
-  let data;
-  try {
-    const res = await fetch('/api/shipments/add', { method: 'POST' });
-    data = await res.json();
-  } catch (err) {
-    alert('Add request failed: ' + err);
-    if (btn) btn.disabled = false;
-    return;
-  }
-  if (!data.ok) {
-    alert(data.error || 'Add failed');
-    if (btn) btn.disabled = false;
-    return;
-  }
-  window.location.href = data.list_url || '/shipments';
 }
 
 // ---- 批量删除：勾选手工空行后删除（仅 Add Row 生成的行可删） ----

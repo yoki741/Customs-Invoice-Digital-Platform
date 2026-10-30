@@ -5,12 +5,15 @@
 1. Shipment List 第一 / 第三类与管理员可见，第二类看不见（403 且侧栏无入口）；
    报关发票列 = 第一列且冻结（sticky-col），文件名点击预览；第一类（及管理员）
    通过「Edit」按钮进入第一次生成该报关发票时的编辑页（invoice_ids 取首次生成
-   记录，不是最新）；第三类只预览。每行提供单文件 Download，预览弹窗内也可下载。
-2. 弹窗编辑权限：第一类 / 第三类 / 管理员点 Actions 列的 Edit 弹出补充信息窗口，
-   一律仅手动填入字段（Package/ETD/ETA/船名/Carrier/柜型/CBM/ID），
-   越权字段（Shipper/Blading/Custom # 等）服务端保留原值；第二类无任何
-   Shipment List 编辑接口。
-3. 报关单编辑页不再弹「Shipment List Extra Info」窗口（生成后直接同步）。
+   记录，不是最新；首次生成发票已失效时回退当前行发票）；第三类仅查看 / 下载（无
+   Edit 入口）。每行提供
+   单文件 Download，预览弹窗内也可下载。
+2. 弹窗编辑权限：第一类 / 管理员点 Actions 列的 Edit 弹出补充信息窗口，仅手动
+   填入字段（Package/ETD/ETA/船名/Carrier/柜型/CBM/ID）可写，越权字段
+   （Shipper/Blading/Custom # 等）服务端保留原值；第二类无任何 Shipment List
+   编辑接口；第三类仅查看 / 下载（无 Edit 按钮，所有编辑接口 403）。
+3. 报关单编辑页生成后弹「Shipment List Extra Info」窗口（从 Shipment List 的
+   Edit 按钮跳入时不弹）。
 """
 
 from __future__ import annotations
@@ -112,6 +115,7 @@ def main() -> None:
         ROLE_TYPE3,
         SessionLocal,
         User,
+        ExportFileVersion,
     )
 
     _check_first_generation()
@@ -141,6 +145,10 @@ def main() -> None:
     finally:
         db.expire_all()
         db.query(User).filter(User.username.like("_perm_test_%")).delete()
+        # 清理测试插入的假「首次生成」记录（invoice_ids=[777]），避免污染真实库
+        db.query(ExportFileVersion).filter(
+            ExportFileVersion.invoice_ids == f"[{FAKE_FIRST_IDS}]"
+        ).delete()
         db.commit()
         db.close()
     print("\nShipment List 权限分割测试全部通过")
@@ -227,20 +235,21 @@ def _run(users: dict[str, str], db: Any) -> None:
     assert page.index('class="sticky-col">Customs Reference #') < page.index("<th>Date</th>"), \
         "报关发票必须是第一列表头"
     assert "sticky-col" in page, "冻结列样式缺失"
-    assert f"/invoices/edit?ids={FAKE_FIRST_IDS}" in page, "管理员编辑入口指向第一次生成"
+    assert f"/invoices/edit?ids={inv_id}" in page, "管理员编辑入口回退到当前发票（首次生成发票已失效）"
+    assert f"/invoices/edit?ids={FAKE_FIRST_IDS}" not in page, "不得指向已失效的首次生成发票"
     assert 'title="Edit customs invoice' in page, "管理员有 Edit 按钮"
     assert 'id="preview-download"' in page, "预览弹窗提供下载按钮"
-    print("[OK] 管理员视角：报关发票第一列且冻结，Edit 按钮 = 第一次生成的页面")
+    print("[OK] 管理员视角：报关发票第一列且冻结，Edit 按钮回退到当前有效发票")
 
     text1 = c1.get("/shipments").text
     assert c1.get("/shipments").status_code == 200
-    assert f"/invoices/edit?ids={FAKE_FIRST_IDS}" in text1, "第一类 Edit 按钮进编辑页（第一次生成）"
+    assert f"/invoices/edit?ids={inv_id}" in text1, "第一类 Edit 按钮进编辑页（回退当前发票）"
     assert 'title="Edit customs invoice' in text1, "第一类有 Edit 按钮"
     assert 'href="/api/download?folder=' in text1, "第一类可单文件下载"
     assert "Download Selected" in text1 and 'onclick="openShipmentEdit(this)"' in text1
     assert 'id="shipment-edit-modal"' in text1, "第一类有补充信息编辑弹窗"
-    assert 'const EDITABLE_FIELDS = ["package"' in text1, "第一类弹窗编辑仅手动填入字段"
-    print("[OK] 第一类视角：Edit 按钮进编辑页（第一次生成），可下载可预览，弹窗编辑仅手动字段")
+    assert 'const MANUAL_EDIT_FIELDS = ["package"' in text1, "第一类弹窗编辑仅手动填入字段"
+    print("[OK] 第一类视角：Edit 按钮进编辑页（回退当前发票），可下载可预览，弹窗编辑仅手动字段")
 
     r = c2.get("/shipments")
     assert r.status_code == 403, r.status_code
@@ -256,10 +265,10 @@ def _run(users: dict[str, str], db: Any) -> None:
     assert "/invoices/edit?ids=" not in text3, "第三类无编辑入口（只预览）"
     assert "previewFromLink" in text3 and "Download Selected" in text3
     assert 'href="/api/download?folder=' in text3, "第三类可单文件下载"
-    assert 'onclick="openShipmentEdit(this)"' in text3, "第三类可弹窗编辑"
-    assert 'const EDITABLE_FIELDS = ["package"' in text3, "第三类仅手动填入字段可编辑"
+    assert 'onclick="openShipmentEdit(this)"' not in text3, "第三类无行内编辑入口"
+    assert 'onclick="openShipmentAdd()"' not in text3, "第三类无 Add Row 入口"
     assert 'title="Edit customs invoice' not in text3
-    print("[OK] 第三类视角：仅预览 + 手动填入字段弹窗编辑，无报关单编辑入口")
+    print("[OK] 第三类视角：仅查看 + 下载，无任何编辑入口")
 
     r = c1.get(f"/invoices/edit?ids={inv_id}")
     assert r.status_code == 200, r.status_code
@@ -271,14 +280,11 @@ def _run(users: dict[str, str], db: Any) -> None:
     assert r.status_code == 403, r.status_code
     print("[OK] 编辑页权限：第一类/第二类可进（快照可用），第三类 403")
 
-    # ---- 2. ID 与字段编辑权限（第一类/第三类均仅手动字段，含 ID） ----
+    # ---- 2. 编辑接口权限：第三类只读（403），第一类仅手动字段（含 ID） ----
     form = _row_form(entry, ref_id="T3-ID-001")
     r = c3.post(f"/api/shipments/{entry_id}/update", data=form)
-    assert r.status_code == 200 and r.json()["ok"], r.text[:300]
-    db.expire_all()
-    entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-001", entry.ref_id
-    print("[OK] 第三类弹窗编辑 ID 生效")
+    assert r.status_code == 403, r.status_code
+    print("[OK] 第三类 /update 403（只读）")
 
     orig_blading, orig_custom = entry.blading, entry.custom_no
     orig_shipper = entry.shipper
@@ -298,38 +304,16 @@ def _run(users: dict[str, str], db: Any) -> None:
     assert (entry.blading, entry.custom_no) == (orig_blading, orig_custom), "未提交字段保持不变"
     print("[OK] 第一类弹窗编辑 ID + 手动字段生效，Shipper 等自动字段保留原值")
 
-    # 以第一类写入后的值为基准：第三类越权提交必须保留原值
-    keep_shipper, keep_blading, keep_custom = entry.shipper, entry.blading, entry.custom_no
-    form = _row_form(
-        entry,
-        ref_id="T3-ID-002",
-        shipper="T3 SHIPPER",
-        blading="T3 BLADING",
-        custom_no="T3-CUSTOM",
-    )
-    r = c3.post(f"/api/shipments/{entry_id}/update", data=form)
-    assert r.status_code == 200 and r.json()["ok"], r.text[:300]
-    db.expire_all()
-    entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-002", entry.ref_id
-    assert entry.shipper == keep_shipper, f"第三类不得改 Shipper，实际 {entry.shipper}"
-    assert entry.blading == keep_blading, f"第三类不得改 Blading，实际 {entry.blading}"
-    assert entry.custom_no == keep_custom, f"第三类不得改 Custom #，实际 {entry.custom_no}"
-    print("[OK] 第三类越权字段保留原值（Shipper/Blading/Custom #），手动字段与 ID 可写")
-
     r = c1.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "T1-ID-002"})
     assert r.status_code == 303, r.status_code
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
     assert entry.ref_id == "T1-ID-002", entry.ref_id
     r = c3.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "T3-ID-003"})
-    assert r.status_code == 303, r.status_code
-    db.expire_all()
-    entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-003", entry.ref_id
+    assert r.status_code == 403, r.status_code
     r = c2.post(f"/api/shipments/{entry_id}/ref-id", data={"ref_id": "T2-ID"})
     assert r.status_code == 403, r.status_code
-    print("[OK] /ref-id 接口：第一类/第三类可写，第二类 403")
+    print("[OK] /ref-id 接口：第一类可写，第二/三类 403")
 
     r = c1.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "T1-ID-003"})
     assert r.status_code == 200 and r.json()["ok"], r.text[:300]
@@ -337,20 +321,17 @@ def _run(users: dict[str, str], db: Any) -> None:
     entry = db.get(ShipmentListEntry, entry_id)
     assert entry.ref_id == "T1-ID-003", entry.ref_id
     r = c3.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "T3-ID-004"})
-    assert r.status_code == 200 and r.json()["ok"], r.text[:300]
-    db.expire_all()
-    entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-004", entry.ref_id
+    assert r.status_code == 403, r.status_code
     r = c2.post("/api/shipments/info", data={"ids": str(inv_id), "ref_id": "T2-ID"})
     assert r.status_code == 403, r.status_code
-    print("[OK] 补充信息接口：ID 第一类/第三类可写，第二类 403")
+    print("[OK] 补充信息接口：第一类可写，第二/三类 403")
 
     # ---- 3. ID 重新导出保留 ----
     r = admin.post("/api/invoices/export", params={"ids": str(inv_id)}, json={"form": FORM})
     assert r.status_code == 200 and r.json()["ok"], r.text[:500]
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.ref_id == "T3-ID-004", "重新导出不得抹掉 ID"
+    assert entry.ref_id == "T1-ID-003", "重新导出不得抹掉 ID"
     print("[OK] 重新导出后 ID 保留页面手填值")
 
 

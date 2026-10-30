@@ -105,12 +105,90 @@
   </div>
 </div>
 
+<!-- Shipment List extra info modal (opened automatically after "Generate .xlsm") -->
+<div class="modal fade" id="shipment-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title">Shipment List Extra Info</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2">
+          {% if user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
+          <div class="col-6">
+            <label class="form-label small mb-1">ID</label>
+            <input type="text" class="form-control form-control-sm" id="sm-ref-id" placeholder="Fill ID">
+          </div>
+          {% endif %}
+          <div class="col-6">
+            <label class="form-label small mb-1">Package</label>
+            <input type="number" step="any" min="0" class="form-control form-control-sm" id="sm-package">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">ETD</label>
+            <input type="text" placeholder="yyyy-mm-dd" class="form-control form-control-sm" id="sm-etd">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">ETA</label>
+            <input type="text" placeholder="yyyy-mm-dd" class="form-control form-control-sm" id="sm-eta">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">VESSEL</label>
+            <input type="text" class="form-control form-control-sm" id="sm-vessel">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">Carrier</label>
+            <input type="text" class="form-control form-control-sm" id="sm-carrier">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">Container Type</label>
+            <input type="text" class="form-control form-control-sm" id="sm-container-type" placeholder="e.g. 40HQ">
+          </div>
+          <div class="col-6">
+            <label class="form-label small mb-1">CBM</label>
+            <input type="number" step="any" min="0" class="form-control form-control-sm" id="sm-cbm">
+          </div>
+        </div>
+        <div class="small text-muted mt-2">
+          Click "Save" to update the Shipment List directly (no re-export needed); blank fields keep their current values.<br>
+          If only ETD is filled, ETA is derived automatically (air +1 day, sea/truck +8 days).<br>
+          {% if user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
+          ID is stored in the platform only (not written into Excel) and is shown in "Invoice Details" as well.
+          {% endif %}
+        </div>
+        <div id="sm-status" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success btn-sm" id="btn-save-shipment" onclick="saveShipmentInfo()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/vendor/univer.js"></script>
 <script>
 const IDS = {{ ids | tojson }};
+// 运输方式字符串，用于 ETD→ETA 自动推算（空运 +1 天，海运/汽运 +8 天）
+const SHIP_MODE_BLOB = {{ ((first.transport or '') + ' ' + (first.ship_mode or '')) | tojson }};
+
+function addDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return dt.getFullYear() + '-' +
+    String(dt.getMonth() + 1).padStart(2, '0') + '-' +
+    String(dt.getDate()).padStart(2, '0');
+}
+
+document.getElementById('sm-etd').addEventListener('change', function () {
+  if (!this.value) return;
+  const isAir = /AIR|空运/i.test(SHIP_MODE_BLOB);
+  document.getElementById('sm-eta').value = addDays(this.value, isAir ? 1 : 8);
+});
 // 记住本次编辑的发票，发票列表页可一键继续编辑
 try {
   localStorage.setItem('last_edit_ids', IDS);
@@ -182,7 +260,7 @@ function buildForm(fields, meta) {
     } else {
       el = document.createElement('input');
       el.type = 'text';
-      if (f.key === 'date') el.type = 'date';
+      if (f.key === 'date') { el.placeholder = 'yyyy-mm-dd'; }
       if (f.key === 'supplier') el.setAttribute('list', 'supplier-list');
     }
     el.className = 'form-control form-control-sm';
@@ -229,7 +307,7 @@ function applyDefaults(meta, first, stored) {
   };
   const today = new Date().toISOString().slice(0, 10);
   set('date', today);
-  set('bill_no', first.invoice_no || '');
+  // Invoice No.（bill_no）默认留空，由操作员手动填写
   set('ship_mode', first.ship_mode || '');
   set('flight_no', first.vessel_flight || '');
   if (meta.delivery_to) {
@@ -609,6 +687,56 @@ function cnTime(s) {
 
 // 是否有装柜列表访问权（第一类 / 第三类 / 管理员）；生成结果里据此显示入口链接
 const HAS_SHIPMENT_LIST = {{ 'true' if user.role != ROLE_TYPE2 else 'false' }};
+// 生成后是否弹「Shipment List Extra Info」窗口：第一类/第三类/管理员弹，第二类不弹；
+// 从 Shipment List 的 Edit 按钮跳入（source=shipment）也不弹
+const CAN_SHIPMENT_INFO = {{ 'true' if (user.role != ROLE_TYPE2 and not from_shipment) else 'false' }};
+// 字段随模板按角色渲染（ID 仅第一类/第三类/管理员可见），只保留在页面上实际存在的项
+const SM_FIELDS = [
+  ['sm-ref-id', 'ref_id'], ['sm-package', 'package'], ['sm-etd', 'etd'], ['sm-eta', 'eta'],
+  ['sm-vessel', 'vessel'], ['sm-carrier', 'carrier'],
+  ['sm-container-type', 'container_type'], ['sm-cbm', 'cbm'],
+].filter(([elId]) => !!document.getElementById(elId));
+let shipmentInfo = null;  // 装柜列表补充信息（生成后弹窗填写，直接更新装柜列表，并随下次导出写入）
+
+function openShipmentInfo() {
+  SM_FIELDS.forEach(([elId, key]) => {
+    document.getElementById(elId).value = (shipmentInfo && shipmentInfo[key]) || '';
+  });
+  const st = document.getElementById('sm-status');
+  st.textContent = '';
+  st.className = 'small mt-2';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('shipment-modal')).show();
+}
+
+async function saveShipmentInfo() {
+  const info = {};
+  SM_FIELDS.forEach(([elId, key]) => {
+    info[key] = document.getElementById(elId).value.trim();
+  });
+  shipmentInfo = info;
+  const body = new URLSearchParams();
+  body.set('ids', IDS);
+  SM_FIELDS.forEach(([, key]) => body.set(key, info[key]));
+  const btn = document.getElementById('btn-save-shipment');
+  btn.disabled = true;
+  const st = document.getElementById('sm-status');
+  try {
+    const res = await fetch('/api/shipments/info', { method: 'POST', body });
+    const data = await res.json();
+    if (data.ok) {
+      st.textContent = (data.message || 'Saved') + '; these values will also be written along with the next export.';
+      st.className = 'small mt-2 text-success';
+    } else {
+      st.textContent = data.error || 'Save failed';
+      st.className = 'small mt-2 text-warning';
+    }
+  } catch (err) {
+    st.textContent = 'Save error: ' + err;
+    st.className = 'small mt-2 text-danger';
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 async function doExport() {
   const form = collectForm();
@@ -621,6 +749,11 @@ async function doExport() {
   }
   pendingExportForm = form;
 
+  // 点击生成会先触发字段 blur → change → 计划自动保存；这里取消它，
+  // 避免自动保存与导出竞态（导出本身已持久化人工字段并返回 saved_at），
+  // 否则自动保存会拿旧的 last_saved_at 触发「已被他人保存」的误报。
+  if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+
   const btn = document.getElementById('btn-export');
   btn.disabled = true;
   setStatus('Generating...');
@@ -628,7 +761,7 @@ async function doExport() {
     const res = await fetch('/api/invoices/export?ids=' + encodeURIComponent(IDS), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ form: pendingExportForm }),
+      body: JSON.stringify({ form: pendingExportForm, shipment: shipmentInfo || {} }),
     });
     const data = await res.json();
     if (!data.ok) {
@@ -662,6 +795,14 @@ async function doExport() {
       warns.innerHTML = warnMsgs.map(m => '⚠ ' + m).join('<br>');
     } else {
       warns.innerHTML = '';
+    }
+    // 生成完成后自动弹窗，填写 Shipment List 需要手动输入的信息
+    // （第二类账号或从 Shipment List 跳入时不弹）
+    if (CAN_SHIPMENT_INFO) {
+      openShipmentInfo();
+      const st = document.getElementById('sm-status');
+      st.textContent = 'Generated ' + data.filename + '. Click "Save" to write the fields below directly into the Shipment List (blank fields keep their current values).';
+      st.className = 'small mt-2 text-muted';
     }
   } catch (err) {
     setStatus('Export error: ' + err, 'text-danger');

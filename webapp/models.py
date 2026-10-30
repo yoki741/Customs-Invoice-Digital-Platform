@@ -32,12 +32,12 @@ from core.config import DB_PATH, ensure_dirs
 ROLE_ADMIN = "admin"
 ROLE_TYPE1 = "type1"  # 第一类账号：列表 + 编辑 + 导出
 ROLE_TYPE2 = "type2"  # 第二类账号：仅查看发票明细
-ROLE_TYPE3 = "type3"  # 第三类账号：Shipment List + 报关发票
+ROLE_TYPE3 = "type3"  # 第三类账号：Shipment List 查看 + 下载
 ROLE_LABELS = {
     ROLE_ADMIN: "Admin",
     ROLE_TYPE1: "Type 1 (Business / Customs)",
     ROLE_TYPE2: "Type 2 (Details Viewer)",
-    ROLE_TYPE3: "Type 3 (Shipment List / Customs Invoices)",
+    ROLE_TYPE3: "Type 3 (Shipment List View / Download)",
 }
 
 
