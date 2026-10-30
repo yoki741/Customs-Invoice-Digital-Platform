@@ -23,7 +23,7 @@ from .source_reader import SourceData
 
 SHEET_NAME = "Sheet1"
 FIRST_DATA_ROW = 2
-EXPECTED_COLS = 24
+EXPECTED_COLS = 23
 
 _PLACE_PREFIXES = (
     "port of loading:",
@@ -62,11 +62,9 @@ class ShipmentRow:
     carrier: str = ""
     container_type: str = ""
     cbm: Optional[float] = None
-    machine_cabinet: str = ""
-    aux_cabinet: str = ""
 
     def cells(self) -> list[Any]:
-        """按模板 A-X 列返回单元格值。"""
+        """按模板 A-V 列返回单元格值。"""
         values: list[Any] = [
             self.date,
             self.fty_inv,
@@ -91,8 +89,6 @@ class ShipmentRow:
                 self.carrier,
                 self.container_type,
                 self.cbm,
-                self.machine_cabinet,
-                self.aux_cabinet,
             ]
         )
         return values
@@ -122,8 +118,6 @@ class ShipmentRow:
             "carrier": self.carrier,
             "container_type": self.container_type,
             "cbm": self.cbm,
-            "machine_cabinet": self.machine_cabinet,
-            "aux_cabinet": self.aux_cabinet,
         }
 
 
@@ -409,8 +403,7 @@ def build_row_from_result(
     - 分类 = INV1 D 列，集装箱 = INV1 CONTAINER 区
     - 净重 = 报关净重（传入 customs_weight），毛重 = PKL1!K24
     - Package = PKL1 中 PACKS 前面的数字
-    - ETD / VESSEL / Carrier / 柜型 / CBM / 机器柜 / 辅料柜 为手动字段，留空供人工补齐
-      （机器柜 / 辅料柜仅在 Shipment List 页面行内编辑，不随导出写入）
+    - ETD / VESSEL / Carrier / 柜型 / CBM 为手动字段，留空供人工补齐
     """
     ws_inv1 = workbook["INV1"]
 
@@ -458,8 +451,6 @@ def build_row_from_result(
         carrier="",
         container_type="",
         cbm=None,
-        machine_cabinet="",
-        aux_cabinet="",
     )
 
 
@@ -471,30 +462,6 @@ def month_of(value: Optional[date]) -> str:
 def month_path(month: str) -> Path:
     """月度装柜列表文件路径（month 需为 YYYY-MM）。"""
     return SHIPMENT_LIST_DIR / f"Shipment List {month}.xlsx"
-
-
-def _migrate_template_headers(ws: Any) -> None:
-    """兼容旧版模板表头：ID 原在 W 列，让位给机器柜 / 辅料柜后移到 Y 列。
-
-    模板文件本身已更新时此处无操作；模板被占用改不了时也能保证
-    生成文件的表头与 cells() 列序（W=机器柜、X=辅料柜）一致。
-    """
-    if str(ws["W1"].value or "").strip() != "ID" or ws["Y1"].value:
-        return
-    src = ws["W1"]
-    ws["W1"].value = "Machine Cabinet"
-    ws["X1"].value = "Aux Cabinet"
-    ws["Y1"].value = "ID"
-    for dst in (ws["X1"], ws["Y1"]):
-        dst.font = copy(src.font)
-        dst.border = copy(src.border)
-        dst.fill = copy(src.fill)
-        dst.alignment = copy(src.alignment)
-        dst.number_format = src.number_format
-    width = ws.column_dimensions["W"].width
-    if width:
-        ws.column_dimensions["X"].width = width
-        ws.column_dimensions["Y"].width = width
 
 
 def write_workbook(
@@ -511,7 +478,6 @@ def write_workbook(
     workbook = openpyxl.load_workbook(str(source_template))
     try:
         ws = workbook[SHEET_NAME]
-        _migrate_template_headers(ws)
         for row in range(FIRST_DATA_ROW, ws.max_row + 1):
             for col in range(1, EXPECTED_COLS + 1):
                 ws.cell(row=row, column=col).value = None

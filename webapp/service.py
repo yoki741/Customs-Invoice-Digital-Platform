@@ -596,8 +596,6 @@ def _entry_to_row(entry: ShipmentListEntry) -> ShipmentRow:
         carrier=entry.carrier or "",
         container_type=entry.container_type or "",
         cbm=entry.cbm,
-        machine_cabinet=entry.machine_cabinet or "",
-        aux_cabinet=entry.aux_cabinet or "",
     )
 
 
@@ -650,13 +648,11 @@ def record_shipment_list(
         entry = ShipmentListEntry(custom_no=row.custom_no)
 
     previous_month = entry.month or ""
-    # 手动字段（Package/ETD/ETA/船名/承运人/柜型/CBM/机器柜/辅料柜）留空保留原值，
+    # 手动字段（Package/ETD/ETA/船名/承运人/柜型/CBM）留空保留原值，
     # 与编辑页弹窗「留空保留」语义一致，避免重新导出清空已填写的内容；清空请在
-    # 装柜列表页行内编辑（空值 = 清空）。机器柜/辅料柜只在装柜列表页手填，
-    # 导出行恒为空，这里保证重导出不覆盖页面填写的值。
+    # 装柜列表页行内编辑（空值 = 清空）。
     keep_if_blank = {
         "package", "etd", "eta", "vessel", "carrier", "container_type", "cbm",
-        "machine_cabinet", "aux_cabinet",
     }
     for key, value in payload.items():
         blank = value is None or (isinstance(value, str) and not value.strip())
@@ -760,13 +756,13 @@ ENTRY_EDIT_FIELDS: tuple[str, ...] = (
     "container_1", "container_2", "container_3", "container_4",
     "nw_kg", "gw_kg", "description", "mode", "etd", "eta", "pol",
     "vessel", "carrier", "container_type", "cbm",
-    "machine_cabinet", "aux_cabinet", "ref_id", "custom_ref",
+    "ref_id", "custom_ref",
 )
 
 #: 手动填入字段（装柜补充信息弹窗 + Shipment List 页手填），第三类账号仅可改这些
 MANUAL_EDIT_FIELDS: tuple[str, ...] = (
     "package", "etd", "eta", "vessel", "carrier", "container_type", "cbm",
-    "machine_cabinet", "aux_cabinet", "ref_id",
+    "ref_id",
 )
 
 
@@ -774,11 +770,10 @@ def editable_entry_fields(user: Optional[User], is_manual: bool = False) -> tupl
     """按角色返回 Shipment List 行内可编辑字段（权限分割）。
 
     Shipment List 行内编辑对第一类 / 第三类 / 管理员开放手动填入字段（ID、
-    Package、ETD、ETA、VESSEL、Carrier、Container Type、CBM、Machine
-    Cabinet、Aux Cabinet）；报关发票的整张编辑通过「Edit」按钮跳转到发票明细
-    编辑页（仅第一类 / 管理员）。手工新增的空行（is_manual）无源文件可跳转，
-    因此整行全部字段（含 Customs Reference Number 文件名）都在行内手填。
-    第二类账号看不见装柜列表，无可编辑字段。
+    Package、ETD、ETA、VESSEL、Carrier、Container Type、CBM）；报关发票的
+    整张编辑通过「Edit」按钮跳转到发票明细编辑页（仅第一类 / 管理员）。手工新增
+    的空行（is_manual）无源文件可跳转，因此整行全部字段（含 Customs Reference
+    Number 文件名）都在行内手填。第二类账号看不见装柜列表，无可编辑字段。
 
     Args:
         user: 当前用户；None（系统调用）视为可编辑。
@@ -802,8 +797,8 @@ ENTRY_FIELD_LABELS: dict[str, str] = {
     "nw_kg": "NW KG", "gw_kg": "GW KG", "description": "DESCRIPTION", "mode": "Mode",
     "etd": "ETD", "eta": "ETA", "pol": "POL", "vessel": "VESSEL", "carrier": "Carrier",
     "container_type": "Container Type", "cbm": "CBM",
-    "machine_cabinet": "Machine Cabinet", "aux_cabinet": "Aux Cabinet", "ref_id": "ID",
-    "custom_ref": "Customs Reference Number",
+    "ref_id": "ID",
+    "custom_ref": "Customs Reference #",
 }
 
 _CONTAINER_FIELDS = ("container_1", "container_2", "container_3", "container_4")

@@ -7,12 +7,10 @@
    通过「Edit」按钮进入第一次生成该报关发票时的编辑页（invoice_ids 取首次生成
    记录，不是最新）；第三类只预览。每行提供单文件 Download，预览弹窗内也可下载。
 2. 弹窗编辑权限：第一类 / 第三类 / 管理员点 Actions 列的 Edit 弹出补充信息窗口，
-   一律仅手动填入字段（Package/ETD/ETA/船名/Carrier/柜型/CBM/机器柜/辅料柜/ID），
+   一律仅手动填入字段（Package/ETD/ETA/船名/Carrier/柜型/CBM/ID），
    越权字段（Shipper/Blading/Custom # 等）服务端保留原值；第二类无任何
    Shipment List 编辑接口。
-3. 机器柜 / 辅料柜只在 Shipment List 页面的补充信息弹窗中编辑：可写、随月度
-   Excel 输出、报关单编辑页不再弹「Shipment List Extra Info」窗口（生成后直接
-   同步）、重新导出不覆盖页面手填值。
+3. 报关单编辑页不再弹「Shipment List Extra Info」窗口（生成后直接同步）。
 """
 
 from __future__ import annotations
@@ -226,7 +224,7 @@ def _run(users: dict[str, str], db: Any) -> None:
 
     # ---- 1. 页面访问 + 入口权限 ----
     page = admin.get("/shipments").text
-    assert page.index('class="sticky-col">Customs Reference Number') < page.index("<th>Date</th>"), \
+    assert page.index('class="sticky-col">Customs Reference #') < page.index("<th>Date</th>"), \
         "报关发票必须是第一列表头"
     assert "sticky-col" in page, "冻结列样式缺失"
     assert f"/invoices/edit?ids={FAKE_FIRST_IDS}" in page, "管理员编辑入口指向第一次生成"
@@ -347,54 +345,13 @@ def _run(users: dict[str, str], db: Any) -> None:
     assert r.status_code == 403, r.status_code
     print("[OK] 补充信息接口：ID 第一类/第三类可写，第二类 403")
 
-    # ---- 3. 机器柜 / 辅料柜：仅 Shipment List 页手填 ----
-    # 先清空（防止上次测试残留同值导致无变更），再写入目标值
-    c3.post(
-        f"/api/shipments/{entry_id}/update",
-        data=_row_form(entry, machine_cabinet="", aux_cabinet=""),
-    )
-    form = _row_form(entry, machine_cabinet="MSKU-PERM-1", aux_cabinet="AUX-PERM-1")
-    r = c3.post(f"/api/shipments/{entry_id}/update", data=form)
-    assert r.status_code == 200 and r.json()["ok"], r.text[:300]
-    labels = {c["label"] for c in r.json()["changes"]}
-    assert "Machine Cabinet" in labels and "Aux Cabinet" in labels, labels
-    db.expire_all()
-    entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.machine_cabinet == "MSKU-PERM-1" and entry.aux_cabinet == "AUX-PERM-1"
-    print("[OK] 弹窗编辑机器柜/辅料柜落库（改动留痕含 机器柜/辅料柜）")
-
-    month_file = month_path(entry.month)
-    assert month_file.exists(), month_file
-    import openpyxl
-
-    wb = openpyxl.load_workbook(month_file)
-    ws = wb["Sheet1"]
-    hit = False
-    for row in range(2, ws.max_row + 1):
-        if ws.cell(row, 23).value == "MSKU-PERM-1" and ws.cell(row, 24).value == "AUX-PERM-1":
-            hit = True
-            break
-    wb.close()
-    assert hit, "月度 Excel W/X 列应写入机器柜/辅料柜"
-    print("[OK] 月度 Excel 写入 机器柜(W)/辅料柜(X)")
-
-    page3 = c3.get("/shipments").text
-    assert 'data-field="machine_cabinet"' in page3 and 'data-field="aux_cabinet"' in page3, \
-        "Shipment List 页提供机器柜/辅料柜弹窗编辑"
-
-    edit_page = admin.get(f"/invoices/edit?ids={inv_id}").text
-    assert "machine_cabinet" not in edit_page and "机器柜" not in edit_page, \
-        "编辑页弹窗不得提供机器柜/辅料柜"
-    print("[OK] 编辑页弹窗无机器柜/辅料柜（只能在 Shipment List 页编辑）")
-
+    # ---- 3. ID 重新导出保留 ----
     r = admin.post("/api/invoices/export", params={"ids": str(inv_id)}, json={"form": FORM})
     assert r.status_code == 200 and r.json()["ok"], r.text[:500]
     db.expire_all()
     entry = db.get(ShipmentListEntry, entry_id)
-    assert entry.machine_cabinet == "MSKU-PERM-1" and entry.aux_cabinet == "AUX-PERM-1", \
-        "重新导出不得覆盖页面手填的机器柜/辅料柜"
-    assert entry.ref_id == "T3-ID-004", "重新导出也不得抹掉 ID"
-    print("[OK] 重新导出后机器柜/辅料柜/ID 保留页面手填值")
+    assert entry.ref_id == "T3-ID-004", "重新导出不得抹掉 ID"
+    print("[OK] 重新导出后 ID 保留页面手填值")
 
 
 if __name__ == "__main__":

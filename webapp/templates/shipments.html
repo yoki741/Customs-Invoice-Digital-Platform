@@ -186,8 +186,6 @@
             <th>Carrier</th>
             <th>Container Type</th>
             <th class="num">CBM</th>
-            <th>Machine Cabinet</th>
-            <th>Aux Cabinet</th>
             <th>ID</th>
             <th>Updated</th>
             <th class="text-end sticky-actions">Actions</th>
@@ -262,8 +260,6 @@
             <td class="small" data-field="carrier" data-value="{{ r.carrier or '' }}">{{ r.carrier or '-' }}</td>
             <td class="small" data-field="container_type" data-value="{{ r.container_type or '' }}">{{ r.container_type or '-' }}</td>
             <td class="num" data-field="cbm" data-value="{{ r.cbm if r.cbm is not none else '' }}">{{ '%.3f'|format(r.cbm) if r.cbm is not none else '-' }}</td>
-            <td class="small text-nowrap" data-field="machine_cabinet" data-value="{{ r.machine_cabinet or '' }}">{{ r.machine_cabinet or '-' }}</td>
-            <td class="small text-nowrap" data-field="aux_cabinet" data-value="{{ r.aux_cabinet or '' }}">{{ r.aux_cabinet or '-' }}</td>
             <td class="small text-nowrap fw-semibold" data-field="ref_id" data-value="{{ r.ref_id or '' }}">{{ r.ref_id or '-' }}</td>
             <td class="small text-muted text-nowrap cell-updated">
               {{ r.updated_at|localtime('%Y-%m-%d %H:%M') if r.updated_at else '-' }}
@@ -565,8 +561,6 @@ const FIELD_DEFS = [
   ['carrier', 'Carrier', 'text', ''],
   ['container_type', 'Container Type', 'text', 'e.g. 40HQ'],
   ['cbm', 'CBM', 'number', ''],
-  ['machine_cabinet', 'Machine Cabinet', 'text', ''],
-  ['aux_cabinet', 'Aux Cabinet', 'text', ''],
   ['ref_id', 'ID', 'text', ''],
 ];
 

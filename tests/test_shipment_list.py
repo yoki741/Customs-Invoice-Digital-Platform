@@ -208,19 +208,13 @@ def main() -> None:
         check(res_row.etd is None and res_row.eta is None, "ETD/ETA 留空")
         check(res_row.vessel == "" and res_row.carrier == "", "VESSEL/Carrier 留空")
         check(res_row.container_type == "" and res_row.cbm is None, "柜型/CBM 留空待人工")
-        check(
-            res_row.machine_cabinet == "" and res_row.aux_cabinet == "",
-            "机器柜/辅料柜 留空（仅 Shipment List 页手填）",
-        )
     finally:
         res_wb.close()
 
-    check(len(row.cells()) == 24, "cells() 返回 24 列")
+    check(len(row.cells()) == 22, "cells() 返回 22 列")
 
     row.container_type = "40HQ"
     row.cbm = 45.5
-    row.machine_cabinet = "MSKU1234567"
-    row.aux_cabinet = "TGHU7654321"
     out = Path(tempfile.gettempdir()) / "shipment_list_test.xlsx"
     write_workbook([row, row_eastex], out)
     wb = openpyxl.load_workbook(out)
@@ -234,13 +228,10 @@ def main() -> None:
         check("mmm" in ws["A2"].number_format, "日期格式沿用模板")
         check(ws["A2"].border.left.style == "thin", "边框沿用模板")
         check(ws["U1"].value == "柜型" and ws["V1"].value == "CBM"
-              and ws["W1"].value == "Machine Cabinet" and ws["X1"].value == "Aux Cabinet"
-              and ws["Y1"].value == "ID",
-              "新列表头 柜型/CBM/Machine Cabinet/Aux Cabinet/ID")
+              and ws["W1"].value == "ID",
+              "新列表头 柜型/CBM/ID")
         check(ws["U2"].value == "40HQ" and ws["V2"].value == 45.5,
               "第 2 行写入柜型/CBM")
-        check(ws["W2"].value == "MSKU1234567" and ws["X2"].value == "TGHU7654321",
-              "第 2 行写入机器柜/辅料柜")
     finally:
         wb.close()
     out.unlink(missing_ok=True)
@@ -305,20 +296,6 @@ def main() -> None:
         check(_e.ref_id == "ID-888", "ref_id 再次填写可覆盖")
         check(_db2.query(_SLE).count() == 1, "同一 source_key 重导出只更新不新增")
         check("ref_id" not in _row.as_dict(), "as_dict 不含 ref_id（Excel 行无此列）")
-        # 机器柜/辅料柜仅 Shipment List 页手填：导出行恒为空，重导出不得覆盖
-        _e.machine_cabinet = "MSKU1234567"
-        _e.aux_cabinet = "TGHU7654321"
-        _db2.commit()
-        _record(_db2, None, [_inv], _row, ref_id="")
-        _db2.refresh(_e)
-        check(
-            _e.machine_cabinet == "MSKU1234567" and _e.aux_cabinet == "TGHU7654321",
-            "机器柜/辅料柜 重导出保留页面手填值",
-        )
-        check(
-            "machine_cabinet" in _row.as_dict() and "aux_cabinet" in _row.as_dict(),
-            "as_dict 含机器柜/辅料柜",
-        )
     finally:
         _service.rebuild_shipment_month = _orig_rebuild
         _db2.close()

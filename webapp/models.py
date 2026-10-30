@@ -223,9 +223,6 @@ class ShipmentListEntry(Base):
     carrier: Mapped[str] = mapped_column(String(128), default="")
     container_type: Mapped[str] = mapped_column(String(64), default="")
     cbm: Mapped[Optional[float]] = mapped_column(Float)
-    # 机器柜 / 辅料柜：仅 Shipment List 页面手动编辑（不随导出写入、不进 .xlsm）
-    machine_cabinet: Mapped[str] = mapped_column(String(64), default="")
-    aux_cabinet: Mapped[str] = mapped_column(String(64), default="")
     ref_id: Mapped[str] = mapped_column(String(128), default="")
     # 手工新增行：无源文件 / 无报关单，全部字段由行内编辑手填
     is_manual: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -336,7 +333,7 @@ def _migrate_check_fields() -> None:
 
 
 def _migrate_shipment_fields() -> None:
-    """为已有 shipment_list_entries 表补上柜型 / CBM / 机器柜 / 辅料柜 / source_key /
+    """为已有 shipment_list_entries 表补上柜型 / CBM / source_key /
     ref_id / is_manual / custom_ref 列（SQLite ALTER）。"""
     with engine.begin() as conn:
         existing = {
@@ -348,8 +345,6 @@ def _migrate_shipment_fields() -> None:
         for name, decl in (
             ("container_type", "VARCHAR(64) DEFAULT ''"),
             ("cbm", "FLOAT"),
-            ("machine_cabinet", "VARCHAR(64) DEFAULT ''"),
-            ("aux_cabinet", "VARCHAR(64) DEFAULT ''"),
             ("source_key", "VARCHAR(512) DEFAULT ''"),
             ("ref_id", "VARCHAR(128) DEFAULT ''"),
             ("is_manual", "BOOLEAN DEFAULT 0"),
