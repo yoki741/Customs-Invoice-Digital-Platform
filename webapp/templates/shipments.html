@@ -130,10 +130,12 @@
         <a class="btn btn-outline-secondary btn-sm" href="/shipments">Reset</a>
       </div>
       <div class="col-auto ms-auto d-flex gap-2">
-        {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
+        {% if user.role in [ROLE_TYPE1, ROLE_TYPE3, ROLE_ADMIN] %}
         <button type="button" class="btn btn-primary btn-sm" id="btn-add-row"
                 onclick="addEmptyRow()" title="Add an empty row and fill in every field manually">
           Add Row</button>
+        {% endif %}
+        {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
         <button type="button" class="btn btn-outline-danger btn-sm" id="btn-delete-rows"
                 onclick="deleteSelected()" title="Delete checked manually-added rows">
           Delete</button>

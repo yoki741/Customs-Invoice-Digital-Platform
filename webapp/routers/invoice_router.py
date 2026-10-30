@@ -443,13 +443,13 @@ async def shipment_list_page(
 
 @router.post("/api/shipments/add")
 async def shipment_add(
-    user: User = Depends(require_type1),
+    user: User = Depends(require_type1_or_3),
     db: Session = Depends(get_db),
 ) -> object:
     """Shipment List 新增行：直接落一条空记录，全部字段行内手填。
 
     不生成报关单文件、不关联发票；报关单文件名（Customs Reference Number）
-    为纯文本手填。权限分割：仅第一类 / 管理员可新增（第三类不可新增）。
+    为纯文本手填。权限分割：第一类 / 第三类 / 管理员可新增。
     """
     try:
         entry, info = add_empty_shipment_row(db, user)
