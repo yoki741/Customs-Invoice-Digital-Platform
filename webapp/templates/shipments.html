@@ -134,8 +134,6 @@
         <button type="button" class="btn btn-primary btn-sm" id="btn-add-row"
                 onclick="addEmptyRow()" title="Add an empty row and fill in every field manually">
           Add Row</button>
-        {% endif %}
-        {% if user.role in [ROLE_TYPE1, ROLE_ADMIN] %}
         <button type="button" class="btn btn-outline-danger btn-sm" id="btn-delete-rows"
                 onclick="deleteSelected()" title="Delete checked manually-added rows">
           Delete</button>
@@ -165,12 +163,12 @@
               <input type="checkbox" class="form-check-input m-0"
                      onclick="toggleAllFiles(this)" title="Check all">
             </th>
-            <th class="sticky-col">Customs Reference Number</th>
+            <th class="sticky-col">Customs Reference #</th>
             <th>Date</th>
             <th>Fty Inv</th>
             <th>Shipper</th>
             <th>EST/VCO</th>
-            <th>Custom Invoice Number</th>
+            <th>Custom Invoice #</th>
             <th class="num">Package</th>
             <th>Blading</th>
             <th>Container 1</th>
@@ -232,7 +230,7 @@
                 </span>
               </div>
               {% elif r.is_manual %}
-                <span class="text-muted" title="Customs Reference Number (filename only)">{{ r.custom_ref or '-' }}</span>
+                <span class="text-muted" title="Customs Reference # (filename only)">{{ r.custom_ref or '-' }}</span>
               {% else %}
                 <span class="text-muted" title="File missing">{{ r.file_name or '-' }}</span>
               {% endif %}
@@ -544,12 +542,12 @@ const ALL_EDIT_FIELDS = {{ all_edit_fields | tojson }};
 // 弹窗字段定义：[字段名, 显示名, 输入类型, 占位提示]；顺序与 Shipment List 表头一致。
 // 输入类型：text / textarea / date / number / mode（下拉）。
 const FIELD_DEFS = [
-  ['custom_ref', 'Customs Reference Number', 'text', 'e.g. VANCO INV#2609006-CT(AIR).xlsm'],
+  ['custom_ref', 'Customs Reference #', 'text', 'e.g. VANCO INV#2609006-CT(AIR).xlsm'],
   ['date', 'Date', 'date', ''],
   ['fty_inv', 'Fty Inv', 'textarea', ''],
   ['shipper', 'Shipper', 'text', ''],
   ['est_vco', 'EST/VCO', 'text', 'Eastex / Vanco'],
-  ['custom_no', 'Custom Invoice Number', 'text', ''],
+  ['custom_no', 'Custom Invoice #', 'text', ''],
   ['package', 'Package', 'number', ''],
   ['blading', 'Blading', 'text', ''],
   ['container_1', 'Container 1', 'text', ''],
@@ -642,7 +640,7 @@ function openShipmentEdit(btn) {
     'Edit: ' + (no ? (no.dataset.value || '') : tr.dataset.entryId);
   document.getElementById('se-hint').innerHTML = isManual
     ? 'This row was added manually and has no customs invoice file. Fill in every field here; '
-      + 'Customs Reference Number is the filename text only.'
+      + 'Customs Reference # is the filename text only.'
     : 'Only manually-filled fields are editable here. Fields synced from the customs invoice '
       + '(Date, Shipper, POL, Containers, DESCRIPTION, etc.) must be changed via the '
       + '&ldquo;Edit&rdquo; button on the customs invoice.';

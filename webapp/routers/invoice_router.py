@@ -574,14 +574,14 @@ async def shipment_entry_update(
 @router.post("/api/shipments/delete")
 async def shipment_delete_selected(
     ids: str = Form(""),
-    user: User = Depends(require_type1),
+    user: User = Depends(require_type1_or_3),
     db: Session = Depends(get_db),
 ) -> object:
     """批量删除 Shipment List 手工新增的空行（仅 Add Row 生成的行可删）。
 
     勾选的行中只删除 is_manual 的空行；有报关单文件的普通行跳过不删（报关发票
-    本身另有删除/重做入口）。权限分割：新增行仅第一类 / 管理员可建，删除同样
-    限定第一类 / 管理员。删除后重建涉及的月份装柜列表 Excel。
+    本身另有删除/重做入口）。权限分割：新增行第一类 / 第三类 / 管理员可建，删除
+    同样限定第一类 / 第三类 / 管理员。删除后重建涉及的月份装柜列表 Excel。
     """
     entry_ids = _parse_ids(ids)
     if not entry_ids:
